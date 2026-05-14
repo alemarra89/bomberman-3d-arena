@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# TypeScript
+*.tsbuildinfo
+
+# Test and coverage output
+coverage/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Runtime-generated 3D assets
+public/generated-assets/*
+!public/generated-assets/.gitkeep
+
+# Tool caches
+.vite/
+.eslintcache
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

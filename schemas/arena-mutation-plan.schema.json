@@ -1,0 +1,140 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ArenaMutationPlan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["theme", "mood", "palette", "timeline"],
+  "properties": {
+    "theme": {
+      "type": "string",
+      "enum": ["classic", "space_base", "ice_dungeon", "volcano_arena", "cyberpunk_city", "dark_corruption"]
+    },
+    "mood": {
+      "type": "string"
+    },
+    "palette": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary", "secondary", "accent"],
+      "properties": {
+        "primary": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "secondary": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "accent": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
+      }
+    },
+    "timeline": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "atMs",
+          "type",
+          "message",
+          "intensity",
+          "enabled",
+          "preset",
+          "asset",
+          "effect",
+          "style",
+          "cell"
+        ],
+        "properties": {
+          "atMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3200
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "show_overlay",
+              "camera_shake",
+              "camera_orbit",
+              "set_lighting",
+              "set_fog",
+              "replace_floor",
+              "replace_walls",
+              "replace_crates",
+              "change_bomb_skin",
+              "spawn_particles",
+              "trigger_demo_explosion"
+            ]
+          },
+          "message": {
+            "type": ["string", "null"]
+          },
+          "intensity": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "maximum": 2
+          },
+          "enabled": {
+            "type": ["boolean", "null"]
+          },
+          "preset": {
+            "type": ["string", "null"],
+            "enum": ["neutral", "emergency_neon", "frozen_blue", "volcano_glow", "cyberpunk_magenta", "dark_ritual", null]
+          },
+          "asset": {
+            "type": ["string", "null"],
+            "enum": [
+              "classic_floor",
+              "space_metal_grid",
+              "ice_slab",
+              "lava_plate",
+              "neon_asphalt",
+              "corrupted_stone",
+              "classic_wall",
+              "sci_fi_panels",
+              "frozen_wall",
+              "basalt_wall",
+              "neon_wall",
+              "shadow_obelisk",
+              "wood_crate",
+              "energy_crate",
+              "ice_crate",
+              "magma_crate",
+              "arcade_crate",
+              "void_crate",
+              "classic_bomb",
+              "plasma_core",
+              "freeze_charge",
+              "magma_bomb",
+              "neon_pulse",
+              "dark_orb",
+              null
+            ]
+          },
+          "effect": {
+            "type": ["string", "null"],
+            "enum": ["blue_energy_dust", "steam_puffs", "snow_sparks", "ember_rain", "hologram_grid", "purple_fog", null]
+          },
+          "style": {
+            "type": ["string", "null"],
+            "enum": ["classic_cross", "energy_cross", "ice_cross", "lava_cross", "neon_cross", "void_cross", null]
+          },
+          "cell": {
+            "anyOf": [
+              {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
