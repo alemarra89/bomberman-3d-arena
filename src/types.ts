@@ -62,6 +62,8 @@ export type ExplosionStyle =
   | "neon_cross"
   | "void_cross";
 
+export type ViewMode = "top_down" | "three_d" | "fps";
+
 export type DirectorActionType =
   | "show_overlay"
   | "camera_shake"

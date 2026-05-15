@@ -1,4 +1,4 @@
-import { Color3, Color4, GlowLayer, Tools, Vector3 } from "@babylonjs/core";
+import { Camera, Color3, Color4, GlowLayer, Tools, Vector3 } from "@babylonjs/core";
 import type { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
 import { Scene as BabylonScene } from "@babylonjs/core/scene";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -12,10 +12,11 @@ import {
   lightingColors,
   wallLooks
 } from "../catalog";
-import type { ArenaState, ExplosionCue, ExplosionStyle } from "../types";
+import type { ArenaState, ExplosionCue, ExplosionStyle, ViewMode } from "../types";
 
 interface ArenaContentProps {
   arena: ArenaState;
+  viewMode: ViewMode;
 }
 
 interface Cell {
@@ -42,7 +43,7 @@ const playerStart: Cell = { x: center, z: size - 2 };
 const bombFuseMs = 3000;
 const defaultBombRadius = 3;
 
-export function ArenaContent({ arena }: ArenaContentProps) {
+export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
   const scene = useScene();
   const floor = floorLooks[arena.floor];
   const walls = wallLooks[arena.walls];
@@ -137,9 +138,9 @@ export function ArenaContent({ arena }: ArenaContentProps) {
   }, [explodeBomb, playerCell]);
 
   const movePlayer = useCallback(
-    (dx: number, dz: number) => {
+    (direction: Cell) => {
       setPlayerCell(current => {
-        const next = { x: current.x + dx, z: current.z + dz };
+        const next = { x: current.x + direction.x, z: current.z + direction.z };
         if (!isWalkable(next, wallSet, destructibleSet, bombSet)) {
           return current;
         }
@@ -175,16 +176,16 @@ export function ArenaContent({ arena }: ArenaContentProps) {
       const key = event.key.toLowerCase();
       if (key === "arrowup" || key === "w") {
         event.preventDefault();
-        movePlayer(0, -1);
+        movePlayer(resolveMoveDirection(scene, viewMode, "forward"));
       } else if (key === "arrowdown" || key === "s") {
         event.preventDefault();
-        movePlayer(0, 1);
+        movePlayer(resolveMoveDirection(scene, viewMode, "backward"));
       } else if (key === "arrowleft" || key === "a") {
         event.preventDefault();
-        movePlayer(-1, 0);
+        movePlayer(resolveMoveDirection(scene, viewMode, "left"));
       } else if (key === "arrowright" || key === "d") {
         event.preventDefault();
-        movePlayer(1, 0);
+        movePlayer(resolveMoveDirection(scene, viewMode, "right"));
       } else if (key === " " || key === "b") {
         event.preventDefault();
         placeBomb();
@@ -203,22 +204,11 @@ export function ArenaContent({ arena }: ArenaContentProps) {
       window.removeEventListener("arena:place-bomb", handlePlaceBombEvent);
       canvas?.removeEventListener("pointerdown", focusCanvas);
     };
-  }, [movePlayer, placeBomb]);
+  }, [movePlayer, placeBomb, scene, viewMode]);
 
   return (
     <>
-      <arcRotateCamera
-        name="arena-camera"
-        alpha={Tools.ToRadians(45)}
-        beta={Tools.ToRadians(60)}
-        radius={27}
-        target={new Vector3(0, 0, 0)}
-        onCreate={(camera: ArcRotateCamera) => {
-          scene.activeCamera = camera;
-          camera.lowerRadiusLimit = 18;
-          camera.upperRadiusLimit = 34;
-        }}
-      />
+      <ArenaCamera viewMode={viewMode} playerCell={playerCell} />
       <hemisphericLight
         name="ambient-light"
         direction={new Vector3(0, 1, 0)}
@@ -326,6 +316,51 @@ export function ArenaContent({ arena }: ArenaContentProps) {
   );
 }
 
+function ArenaCamera({ viewMode, playerCell }: { viewMode: ViewMode; playerCell: Cell }) {
+  const scene = useScene();
+  const playerTarget = cellPosition(playerCell.x, playerCell.z, 0.68);
+
+  useEffect(() => {
+    const camera = scene.getCameraByName("arena-camera") as ArcRotateCamera | null;
+    if (!camera || viewMode !== "fps") {
+      return;
+    }
+
+    camera.setTarget(playerTarget);
+  }, [playerTarget, scene, viewMode]);
+
+  return (
+    <arcRotateCamera
+      key={viewMode}
+      name="arena-camera"
+      alpha={viewMode === "top_down" ? Tools.ToRadians(-90) : Tools.ToRadians(45)}
+      beta={viewMode === "top_down" ? 0.01 : Tools.ToRadians(60)}
+      radius={viewMode === "fps" ? 3.4 : viewMode === "top_down" ? 31 : 27}
+      target={viewMode === "fps" ? playerTarget : new Vector3(0, 0, 0)}
+      onCreate={(camera: ArcRotateCamera) => {
+        const canvas = scene.getEngine().getRenderingCanvas();
+        scene.activeCamera = camera;
+        camera.panningSensibility = 0;
+
+        if (viewMode === "top_down") {
+          camera.mode = Camera.ORTHOGRAPHIC_CAMERA;
+          camera.lowerRadiusLimit = camera.upperRadiusLimit = 31;
+          camera.lowerBetaLimit = camera.upperBetaLimit = 0.01;
+          configureOrthographicCamera(camera, scene);
+          return;
+        }
+
+        camera.lowerBetaLimit = Tools.ToRadians(24);
+        camera.upperBetaLimit = Tools.ToRadians(82);
+        camera.wheelDeltaPercentage = viewMode === "fps" ? 0.045 : 0.035;
+        camera.lowerRadiusLimit = viewMode === "fps" ? 0.7 : 18;
+        camera.upperRadiusLimit = viewMode === "fps" ? 6 : 36;
+        camera.attachControl(canvas, true);
+      }}
+    />
+  );
+}
+
 function useSceneRuntime(scene: BabylonScene, arena: ArenaState) {
   const glowRef = useRef<GlowLayer | null>(null);
 
@@ -353,22 +388,32 @@ function useSceneRuntime(scene: BabylonScene, arena: ArenaState) {
 
   useEffect(() => {
     const camera = scene.getCameraByName("arena-camera") as ArcRotateCamera | null;
-    if (!camera) {
+    if (!camera || (!arena.cameraKick && !arena.cameraOrbit)) {
       return;
     }
 
-    const baseRadius = 27;
-    const baseAlpha = Tools.ToRadians(45);
+    const baseRadius = camera.radius;
+    const baseAlpha = camera.alpha;
+    const baseBeta = camera.beta;
+    const baseTarget = camera.target.clone();
     const start = performance.now();
     const observer = scene.onBeforeRenderObservable.add(() => {
       const elapsed = performance.now() - start;
       const shake = Math.max(0, 1 - elapsed / 700) * arena.cameraKick;
       const orbitPulse = Math.max(0, 1 - elapsed / 1200) * arena.cameraOrbit;
       camera.alpha = baseAlpha + Math.sin(elapsed * 0.02) * shake * 0.006;
-      camera.beta = Tools.ToRadians(60 + Math.sin(elapsed * 0.04) * shake * 0.35);
+      camera.beta = baseBeta + Tools.ToRadians(Math.sin(elapsed * 0.04) * shake * 0.35);
       camera.radius = baseRadius - orbitPulse * 1.35 + Math.sin(elapsed * 0.07) * shake * 0.16;
-      camera.target.x = Math.sin(elapsed * 0.05) * shake * 0.08;
-      camera.target.z = Math.cos(elapsed * 0.04) * shake * 0.08;
+      camera.target.x = baseTarget.x + Math.sin(elapsed * 0.05) * shake * 0.08;
+      camera.target.z = baseTarget.z + Math.cos(elapsed * 0.04) * shake * 0.08;
+
+      if (elapsed >= 1200) {
+        camera.alpha = baseAlpha;
+        camera.beta = baseBeta;
+        camera.radius = baseRadius;
+        camera.setTarget(baseTarget);
+        scene.onBeforeRenderObservable.remove(observer);
+      }
     });
 
     return () => {
@@ -648,11 +693,17 @@ function MutationWave({ arena }: { arena: ArenaState }) {
 }
 
 function useTimedMeshAnimation(scene: BabylonScene, key: string, durationMs: number, update: (progress: number) => void) {
+  const updateRef = useRef(update);
+
+  useEffect(() => {
+    updateRef.current = update;
+  }, [update]);
+
   useEffect(() => {
     const start = performance.now();
     const observer = scene.onBeforeRenderObservable.add(() => {
       const progress = Math.min(1, (performance.now() - start) / durationMs);
-      update(progress);
+      updateRef.current(progress);
 
       if (progress >= 1) {
         scene.onBeforeRenderObservable.remove(observer);
@@ -662,7 +713,84 @@ function useTimedMeshAnimation(scene: BabylonScene, key: string, durationMs: num
     return () => {
       scene.onBeforeRenderObservable.remove(observer);
     };
-  }, [durationMs, key, scene, update]);
+  }, [durationMs, key, scene]);
+}
+
+function configureOrthographicCamera(camera: ArcRotateCamera, scene: BabylonScene) {
+  const updateBounds = () => {
+    const engine = scene.getEngine();
+    const aspect = engine.getRenderWidth() / Math.max(1, engine.getRenderHeight());
+    const halfBoard = size / 2 + 1.2;
+    const halfHeight = aspect >= 1 ? halfBoard : halfBoard / aspect;
+    const halfWidth = aspect >= 1 ? halfBoard * aspect : halfBoard;
+    camera.orthoLeft = -halfWidth;
+    camera.orthoRight = halfWidth;
+    camera.orthoTop = halfHeight;
+    camera.orthoBottom = -halfHeight;
+  };
+
+  updateBounds();
+  const observer = scene.getEngine().onResizeObservable.add(updateBounds);
+  camera.onDisposeObservable.add(() => {
+    scene.getEngine().onResizeObservable.remove(observer);
+  });
+}
+
+function resolveMoveDirection(
+  scene: BabylonScene,
+  viewMode: ViewMode,
+  command: "forward" | "backward" | "left" | "right"
+) {
+  if (viewMode === "top_down") {
+    return topDownDirection(command);
+  }
+
+  const camera = scene.activeCamera as ArcRotateCamera | null;
+  if (!camera) {
+    return topDownDirection(command);
+  }
+
+  const forward = camera.target.subtract(camera.position);
+  forward.y = 0;
+  if (forward.lengthSquared() < 0.0001) {
+    return topDownDirection(command);
+  }
+
+  forward.normalize();
+  const snappedForward = snapToGrid(forward);
+  const snappedRight = { x: -snappedForward.z, z: snappedForward.x };
+
+  switch (command) {
+    case "forward":
+      return snappedForward;
+    case "backward":
+      return { x: -snappedForward.x, z: -snappedForward.z };
+    case "left":
+      return { x: -snappedRight.x, z: -snappedRight.z };
+    case "right":
+      return snappedRight;
+  }
+}
+
+function topDownDirection(command: "forward" | "backward" | "left" | "right") {
+  switch (command) {
+    case "forward":
+      return { x: 0, z: -1 };
+    case "backward":
+      return { x: 0, z: 1 };
+    case "left":
+      return { x: -1, z: 0 };
+    case "right":
+      return { x: 1, z: 0 };
+  }
+}
+
+function snapToGrid(vector: Vector3): Cell {
+  if (Math.abs(vector.x) > Math.abs(vector.z)) {
+    return { x: Math.sign(vector.x), z: 0 };
+  }
+
+  return { x: 0, z: Math.sign(vector.z) };
 }
 
 function createFloorCells(): Cell[] {

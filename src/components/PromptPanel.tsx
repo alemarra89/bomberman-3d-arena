@@ -1,11 +1,20 @@
 import type React from "react";
+import type { ViewMode } from "../types";
 import type { ArenaDirector } from "../useArenaDirector";
 
 interface PromptPanelProps {
   director: ArenaDirector;
+  viewMode: ViewMode;
+  setViewMode: React.Dispatch<React.SetStateAction<ViewMode>>;
 }
 
-export function PromptPanel({ director }: PromptPanelProps) {
+const viewModes: Array<{ value: ViewMode; label: string }> = [
+  { value: "top_down", label: "2D" },
+  { value: "three_d", label: "3D" },
+  { value: "fps", label: "FPS" }
+];
+
+export function PromptPanel({ director, viewMode, setViewMode }: PromptPanelProps) {
   const {
     arena,
     prompt,
@@ -64,7 +73,22 @@ export function PromptPanel({ director }: PromptPanelProps) {
         >
           Piazza bomba
         </button>
-        <span>WASD / frecce muovi · Spazio o B bomba</span>
+        <span>WASD / frecce muovi | Spazio o B bomba</span>
+      </div>
+
+      <div className="view-mode-switch" role="tablist" aria-label="Modalita vista">
+        {viewModes.map(mode => (
+          <button
+            key={mode.value}
+            type="button"
+            role="tab"
+            aria-selected={viewMode === mode.value}
+            className={viewMode === mode.value ? "active" : ""}
+            onClick={() => setViewMode(mode.value)}
+          >
+            {mode.label}
+          </button>
+        ))}
       </div>
 
       <div className="quick-prompts" aria-label="Prompt rapidi">
