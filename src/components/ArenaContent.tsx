@@ -1,7 +1,7 @@
 import { Camera, Color3, Color4, GlowLayer, Tools, Vector3 } from "@babylonjs/core";
 import type { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
 import { Scene as BabylonScene } from "@babylonjs/core/scene";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useScene } from "reactylon";
 import {
   bombLooks,
@@ -10,6 +10,7 @@ import {
   explosionColors,
   floorLooks,
   lightingColors,
+  type MaterialLook,
   wallLooks
 } from "../catalog";
 import type { ArenaState, ExplosionCue, ExplosionStyle, ViewMode } from "../types";
@@ -24,6 +25,9 @@ interface Cell {
   z: number;
 }
 
+type MoveCommand = "forward" | "backward" | "left" | "right";
+type ArenaElementKind = "floor" | "wall" | "crate" | "bomb";
+
 interface ActiveBomb {
   id: number;
   cell: Cell;
@@ -37,11 +41,20 @@ interface ActiveBlast {
   style: ExplosionStyle;
 }
 
+interface ActivePlayerMove {
+  id: number;
+  from: Cell;
+  to: Cell;
+}
+
 const size = 23;
 const center = (size - 1) / 2;
 const playerStart: Cell = { x: center, z: size - 2 };
 const bombFuseMs = 3000;
 const defaultBombRadius = 3;
+const playerMoveDurationMs = 400;
+const playerInputPollMs = 16;
+const playerTurnBufferMs = 180;
 
 export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
   const scene = useScene();
@@ -50,6 +63,11 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
   const crates = crateLooks[arena.crates];
   const bomb = bombLooks[arena.bomb];
   const lighting = lightingColors[arena.lighting];
+  const isTopDown = viewMode === "top_down";
+  const floorMaterial = materialLookForView("floor", floor, isTopDown);
+  const wallMaterial = materialLookForView("wall", walls, isTopDown);
+  const crateMaterial = materialLookForView("crate", crates, isTopDown);
+  const bombMaterial = materialLookForView("bomb", bomb, isTopDown);
 
   const wallCells = useMemo(() => createWallCells(), []);
   const wallSet = useMemo(() => toCellSet(wallCells), [wallCells]);
@@ -57,20 +75,34 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
   const initialDestructibles = useMemo(() => createDestructibleCells(wallSet), [wallSet]);
 
   const [playerCell, setPlayerCell] = useState<Cell>(playerStart);
+  const [activePlayerMove, setActivePlayerMove] = useState<ActivePlayerMove | null>(null);
   const [destructibleCells, setDestructibleCells] = useState<Cell[]>(initialDestructibles);
   const [bombs, setBombs] = useState<ActiveBomb[]>([]);
   const [blasts, setBlasts] = useState<ActiveBlast[]>([]);
   const bombCellSetRef = useRef<Set<string>>(new Set());
   const bombTimerIdsRef = useRef<Map<number, number>>(new Map());
+  const playerVisualPositionRef = useRef(cellPosition(playerStart.x, playerStart.z, 0.44));
+  const playerCellRef = useRef(playerStart);
+  const activePlayerMoveRef = useRef<ActivePlayerMove | null>(null);
+  const playerMoveIdRef = useRef(0);
+  const heldMoveCommandsRef = useRef<Map<string, MoveCommand>>(new Map());
+  const bufferedMoveRef = useRef<{ command: MoveCommand; expiresAt: number } | null>(null);
 
   useSceneRuntime(scene, arena);
 
   const destructibleSet = useMemo(() => toCellSet(destructibleCells), [destructibleCells]);
   const bombSet = useMemo(() => toCellSet(bombs.map(activeBomb => activeBomb.cell)), [bombs]);
+  const destructibleSetRef = useRef(destructibleSet);
+  const bombSetRef = useRef(bombSet);
 
   useEffect(() => {
     bombCellSetRef.current = bombSet;
+    bombSetRef.current = bombSet;
   }, [bombSet]);
+
+  useEffect(() => {
+    destructibleSetRef.current = destructibleSet;
+  }, [destructibleSet]);
 
   useEffect(
     () => () => {
@@ -111,7 +143,8 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
   );
 
   const placeBomb = useCallback(() => {
-    const bombCellKey = cellKey(playerCell);
+    const currentPlayerCell = nearestCellFromPosition(playerVisualPositionRef.current);
+    const bombCellKey = cellKey(currentPlayerCell);
     if (bombCellSetRef.current.has(bombCellKey)) {
       return;
     }
@@ -120,7 +153,7 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
 
     const activeBomb: ActiveBomb = {
       id: Date.now(),
-      cell: playerCell,
+      cell: currentPlayerCell,
       explodeAt: performance.now() + bombFuseMs,
       radius: defaultBombRadius
     };
@@ -135,25 +168,82 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
     }, bombFuseMs);
 
     bombTimerIdsRef.current.set(activeBomb.id, timerId);
-  }, [explodeBomb, playerCell]);
+  }, [explodeBomb]);
 
-  const movePlayer = useCallback(
-    (direction: Cell) => {
-      setPlayerCell(current => {
-        const next = { x: current.x + direction.x, z: current.z + direction.z };
-        if (!isWalkable(next, wallSet, destructibleSet, bombSet)) {
-          return current;
-        }
+  const startPlayerMoveFromCell = useCallback(
+    (from: Cell, direction: Cell) => {
+      const to = { x: from.x + direction.x, z: from.z + direction.z };
+      if (!isWalkable(to, wallSet, destructibleSetRef.current, bombSetRef.current)) {
+        return false;
+      }
 
-        return next;
-      });
+      const move = {
+        id: playerMoveIdRef.current + 1,
+        from,
+        to
+      };
+      playerMoveIdRef.current = move.id;
+      activePlayerMoveRef.current = move;
+      setActivePlayerMove(move);
+      return true;
     },
-    [bombSet, destructibleSet, wallSet]
+    [wallSet]
+  );
+
+  const tryStartRequestedMoveFromCell = useCallback(
+    (from: Cell) => {
+      if (activePlayerMoveRef.current) {
+        return false;
+      }
+      const now = performance.now();
+      const bufferedMove =
+        bufferedMoveRef.current && bufferedMoveRef.current.expiresAt >= now ? bufferedMoveRef.current : null;
+      if (bufferedMoveRef.current && !bufferedMove) {
+        bufferedMoveRef.current = null;
+      }
+
+      const heldCommand = Array.from(heldMoveCommandsRef.current.values()).at(-1);
+      const candidateCommands = [bufferedMove?.command, heldCommand].filter(
+        (command, index, commands): command is MoveCommand =>
+          command !== undefined && commands.indexOf(command) === index
+      );
+
+      for (const command of candidateCommands) {
+        const didMove = startPlayerMoveFromCell(from, resolveMoveDirection(scene, viewMode, command));
+        if (didMove) {
+          if (bufferedMove?.command === command) {
+            bufferedMoveRef.current = null;
+          }
+          return true;
+        }
+      }
+
+      return false;
+    },
+    [scene, startPlayerMoveFromCell, viewMode]
+  );
+
+  const completePlayerMove = useCallback(
+    (move: ActivePlayerMove) => {
+      if (activePlayerMoveRef.current?.id !== move.id) {
+        return;
+      }
+
+      playerCellRef.current = move.to;
+      activePlayerMoveRef.current = null;
+      setPlayerCell(move.to);
+
+      if (!tryStartRequestedMoveFromCell(move.to)) {
+        setActivePlayerMove(null);
+      }
+    },
+    [tryStartRequestedMoveFromCell]
   );
 
   useEffect(() => {
     const canvas = document.getElementById("reactylon-canvas") as HTMLCanvasElement | null;
     canvas?.setAttribute("tabindex", "0");
+    let movementTimerId: number | null = null;
 
     const focusCanvas = () => {
       canvas?.focus();
@@ -161,11 +251,30 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
 
     canvas?.addEventListener("pointerdown", focusCanvas);
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat) {
+    const moveHeldDirection = () => {
+      if (!tryStartRequestedMoveFromCell(playerCellRef.current)) {
+        stopMovementTimerIfIdle();
+      }
+    };
+
+    const stopMovementTimerIfIdle = () => {
+      const bufferedMove = bufferedMoveRef.current;
+      const hasValidBufferedMove = bufferedMove !== null && bufferedMove.expiresAt >= performance.now();
+      if (heldMoveCommandsRef.current.size || hasValidBufferedMove || movementTimerId === null) {
         return;
       }
 
+      window.clearInterval(movementTimerId);
+      movementTimerId = null;
+    };
+
+    const clearHeldMovement = () => {
+      heldMoveCommandsRef.current.clear();
+      bufferedMoveRef.current = null;
+      stopMovementTimerIfIdle();
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const isTypingTarget =
         target?.tagName === "TEXTAREA" || target?.tagName === "INPUT" || target?.isContentEditable === true;
@@ -174,22 +283,36 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
       }
 
       const key = event.key.toLowerCase();
-      if (key === "arrowup" || key === "w") {
+      const moveCommand = moveCommandForKey(key);
+      if (moveCommand) {
         event.preventDefault();
-        movePlayer(resolveMoveDirection(scene, viewMode, "forward"));
-      } else if (key === "arrowdown" || key === "s") {
-        event.preventDefault();
-        movePlayer(resolveMoveDirection(scene, viewMode, "backward"));
-      } else if (key === "arrowleft" || key === "a") {
-        event.preventDefault();
-        movePlayer(resolveMoveDirection(scene, viewMode, "left"));
-      } else if (key === "arrowright" || key === "d") {
-        event.preventDefault();
-        movePlayer(resolveMoveDirection(scene, viewMode, "right"));
-      } else if (key === " " || key === "b") {
+        bufferedMoveRef.current = {
+          command: moveCommand,
+          expiresAt: performance.now() + playerTurnBufferMs
+        };
+        if (!heldMoveCommandsRef.current.has(key)) {
+          heldMoveCommandsRef.current.set(key, moveCommand);
+          moveHeldDirection();
+        }
+
+        if (movementTimerId === null) {
+          movementTimerId = window.setInterval(moveHeldDirection, playerInputPollMs);
+        }
+      } else if ((key === " " || key === "b") && !event.repeat) {
         event.preventDefault();
         placeBomb();
       }
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (!moveCommandForKey(key)) {
+        return;
+      }
+
+      event.preventDefault();
+      heldMoveCommandsRef.current.delete(key);
+      stopMovementTimerIfIdle();
     };
 
     const handlePlaceBombEvent = () => {
@@ -198,13 +321,18 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
     };
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
+    window.addEventListener("keyup", handleKeyUp, { capture: true });
+    window.addEventListener("blur", clearHeldMovement);
     window.addEventListener("arena:place-bomb", handlePlaceBombEvent);
     return () => {
       window.removeEventListener("keydown", handleKeyDown, { capture: true });
+      window.removeEventListener("keyup", handleKeyUp, { capture: true });
+      window.removeEventListener("blur", clearHeldMovement);
       window.removeEventListener("arena:place-bomb", handlePlaceBombEvent);
       canvas?.removeEventListener("pointerdown", focusCanvas);
+      clearHeldMovement();
     };
-  }, [movePlayer, placeBomb, scene, viewMode]);
+  }, [placeBomb, tryStartRequestedMoveFromCell]);
 
   return (
     <>
@@ -214,29 +342,33 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
         direction={new Vector3(0, 1, 0)}
         diffuse={Color3.FromHexString(lighting.diffuse)}
         groundColor={Color3.FromHexString(lighting.ground)}
-        intensity={0.82}
+        intensity={isTopDown ? 1 : 0.82}
       />
-      <pointLight
-        name="arena-core-light"
-        position={new Vector3(0, 9, 0)}
-        diffuse={Color3.FromHexString(lighting.point)}
-        specular={Color3.FromHexString(arena.palette.accent)}
-        intensity={2.15}
-      />
-      <spotLight
-        name="arena-scan-light"
-        position={new Vector3(-9, 11, -10)}
-        direction={new Vector3(0.8, -1, 0.9)}
-        angle={0.92}
-        exponent={1.6}
-        diffuse={Color3.FromHexString(arena.palette.secondary)}
-        specular={Color3.FromHexString(arena.palette.accent)}
-        intensity={1.12}
-      />
+      {!isTopDown ? (
+        <>
+          <pointLight
+            name="arena-core-light"
+            position={new Vector3(0, 9, 0)}
+            diffuse={Color3.FromHexString(lighting.point)}
+            specular={Color3.FromHexString(arena.palette.accent)}
+            intensity={2.15}
+          />
+          <spotLight
+            name="arena-scan-light"
+            position={new Vector3(-9, 11, -10)}
+            direction={new Vector3(0.8, -1, 0.9)}
+            angle={0.92}
+            exponent={1.6}
+            diffuse={Color3.FromHexString(arena.palette.secondary)}
+            specular={Color3.FromHexString(arena.palette.accent)}
+            intensity={1.12}
+          />
 
-      <EnergyGrid arena={arena} />
-      <ArenaBeacon arena={arena} />
-      <MutationWave arena={arena} />
+          <EnergyGrid arena={arena} />
+          <ArenaBeacon arena={arena} />
+          <MutationWave arena={arena} />
+        </>
+      ) : null}
 
       {floorCells.map(cell => (
         <box
@@ -247,10 +379,10 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
         >
           <standardMaterial
             name={`floor-material-${cell.x}-${cell.z}`}
-            diffuseColor={Color3.FromHexString(floor.diffuse)}
-            emissiveColor={Color3.FromHexString(floor.emissive)}
-            specularColor={Color3.FromHexString(floor.specular)}
-            alpha={floor.alpha ?? 1}
+            diffuseColor={Color3.FromHexString(floorMaterial.diffuse)}
+            emissiveColor={Color3.FromHexString(floorMaterial.emissive)}
+            specularColor={Color3.FromHexString(floorMaterial.specular)}
+            alpha={floorMaterial.alpha ?? 1}
           />
         </box>
       ))}
@@ -264,31 +396,35 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
         >
           <standardMaterial
             name={`wall-material-${cell.x}-${cell.z}`}
-            diffuseColor={Color3.FromHexString(walls.diffuse)}
-            emissiveColor={Color3.FromHexString(walls.emissive)}
-            specularColor={Color3.FromHexString(walls.specular)}
-            alpha={walls.alpha ?? 1}
+            diffuseColor={Color3.FromHexString(wallMaterial.diffuse)}
+            emissiveColor={Color3.FromHexString(wallMaterial.emissive)}
+            specularColor={Color3.FromHexString(wallMaterial.specular)}
+            alpha={wallMaterial.alpha ?? 1}
           />
         </box>
       ))}
 
-      {destructibleCells.map((cell, index) => (
-        <box
-          key={`crate-${cell.x}-${cell.z}-${arena.crates}`}
-          name={`destructible-${cell.x}-${cell.z}`}
-          position={cellPosition(cell.x, cell.z, 0.34 + Math.sin(index) * 0.02)}
-          rotationY={(index % 4) * 0.08}
-          options={{ width: 0.74, height: 0.72, depth: 0.74 }}
-        >
-          <standardMaterial
-            name={`crate-material-${cell.x}-${cell.z}`}
-            diffuseColor={Color3.FromHexString(crates.diffuse)}
-            emissiveColor={Color3.FromHexString(crates.emissive)}
-            specularColor={Color3.FromHexString(crates.specular)}
-            alpha={crates.alpha ?? 1}
-          />
-        </box>
-      ))}
+      {destructibleCells.map(cell => {
+        const crateVariant = crateVisualVariant(cell);
+
+        return (
+          <box
+            key={`crate-${cell.x}-${cell.z}-${arena.crates}`}
+            name={`destructible-${cell.x}-${cell.z}`}
+            position={cellPosition(cell.x, cell.z, 0.34 + (isTopDown ? 0 : crateVariant.heightOffset))}
+            rotationY={isTopDown ? 0 : crateVariant.rotationY}
+            options={{ width: 0.74, height: 0.72, depth: 0.74 }}
+          >
+            <standardMaterial
+              name={`crate-material-${cell.x}-${cell.z}`}
+              diffuseColor={Color3.FromHexString(crateMaterial.diffuse)}
+              emissiveColor={Color3.FromHexString(crateMaterial.emissive)}
+              specularColor={Color3.FromHexString(crateMaterial.specular)}
+              alpha={crateMaterial.alpha ?? 1}
+            />
+          </box>
+        );
+      })}
 
       {bombs.map(activeBomb => (
         <sphere
@@ -299,15 +435,22 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
         >
           <standardMaterial
             name={`bomb-material-${activeBomb.id}`}
-            diffuseColor={Color3.FromHexString(bomb.diffuse)}
-            emissiveColor={Color3.FromHexString(bomb.emissive)}
-            specularColor={Color3.FromHexString(bomb.specular)}
+            diffuseColor={Color3.FromHexString(bombMaterial.diffuse)}
+            emissiveColor={Color3.FromHexString(bombMaterial.emissive)}
+            specularColor={Color3.FromHexString(bombMaterial.specular)}
           />
         </sphere>
       ))}
 
-      <Player cell={playerCell} arena={arena} />
-      <ParticleMotes arena={arena} />
+      <Player
+        cell={playerCell}
+        activeMove={activePlayerMove}
+        arena={arena}
+        isTopDown={isTopDown}
+        visualPositionRef={playerVisualPositionRef}
+        onMoveComplete={completePlayerMove}
+      />
+      {!isTopDown ? <ParticleMotes arena={arena} /> : null}
       {blasts.map(blast => (
         <BlastCells key={blast.id} blast={blast} />
       ))}
@@ -316,7 +459,13 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
   );
 }
 
-function ArenaCamera({ viewMode, playerCell }: { viewMode: ViewMode; playerCell: Cell }) {
+const ArenaCamera = memo(function ArenaCamera({
+  viewMode,
+  playerCell
+}: {
+  viewMode: ViewMode;
+  playerCell: Cell;
+}) {
   const scene = useScene();
   const playerTarget = cellPosition(playerCell.x, playerCell.z, 0.68);
 
@@ -334,8 +483,8 @@ function ArenaCamera({ viewMode, playerCell }: { viewMode: ViewMode; playerCell:
       key={viewMode}
       name="arena-camera"
       alpha={viewMode === "top_down" ? Tools.ToRadians(-90) : Tools.ToRadians(45)}
-      beta={viewMode === "top_down" ? 0.01 : Tools.ToRadians(60)}
-      radius={viewMode === "fps" ? 3.4 : viewMode === "top_down" ? 31 : 27}
+      beta={viewMode === "top_down" ? 0.01 : Tools.ToRadians(56)}
+      radius={viewMode === "fps" ? 3.4 : viewMode === "top_down" ? 31 : 29}
       target={viewMode === "fps" ? playerTarget : new Vector3(0, 0, 0)}
       onCreate={(camera: ArcRotateCamera) => {
         const canvas = scene.getEngine().getRenderingCanvas();
@@ -352,13 +501,34 @@ function ArenaCamera({ viewMode, playerCell }: { viewMode: ViewMode; playerCell:
 
         camera.lowerBetaLimit = Tools.ToRadians(24);
         camera.upperBetaLimit = Tools.ToRadians(82);
-        camera.wheelDeltaPercentage = viewMode === "fps" ? 0.045 : 0.035;
+        camera.wheelDeltaPercentage = viewMode === "fps" ? 0.045 : 0.024;
         camera.lowerRadiusLimit = viewMode === "fps" ? 0.7 : 18;
-        camera.upperRadiusLimit = viewMode === "fps" ? 6 : 36;
+        camera.upperRadiusLimit = viewMode === "fps" ? 6 : 33;
+        // The gameplay layer owns keyboard movement. Keep camera controls mouse-only
+        // so the arrow keys do not rotate the camera while also moving the player.
+        camera.keysUp = [];
+        camera.keysDown = [];
+        camera.keysLeft = [];
+        camera.keysRight = [];
         camera.attachControl(canvas, true);
       }}
     />
   );
+}, areArenaCameraPropsEqual);
+
+function areArenaCameraPropsEqual(
+  previous: { viewMode: ViewMode; playerCell: Cell },
+  next: { viewMode: ViewMode; playerCell: Cell }
+) {
+  if (previous.viewMode !== next.viewMode) {
+    return false;
+  }
+
+  if (next.viewMode !== "fps") {
+    return true;
+  }
+
+  return sameCell(previous.playerCell, next.playerCell);
 }
 
 function useSceneRuntime(scene: BabylonScene, arena: ArenaState) {
@@ -422,31 +592,102 @@ function useSceneRuntime(scene: BabylonScene, arena: ArenaState) {
   }, [arena.cameraKick, arena.cameraOrbit, scene]);
 }
 
-function Player({ cell, arena }: { cell: Cell; arena: ArenaState }) {
+function Player({
+  cell,
+  activeMove,
+  arena,
+  isTopDown,
+  visualPositionRef,
+  onMoveComplete
+}: {
+  cell: Cell;
+  activeMove: ActivePlayerMove | null;
+  arena: ArenaState;
+  isTopDown: boolean;
+  visualPositionRef: { current: Vector3 };
+  onMoveComplete: (move: ActivePlayerMove) => void;
+}) {
+  const scene = useScene();
+  const bodyPositionRef = useRef(cellPosition(cell.x, cell.z, 0.44));
+  const headPositionRef = useRef(cellPosition(cell.x, cell.z, 0.86));
+
+  useEffect(() => {
+    const body = scene.getMeshByName("player-body");
+    const head = scene.getMeshByName("player-head");
+    if (!activeMove) {
+      const settledBodyPosition = cellPosition(cell.x, cell.z, 0.44);
+      const settledHeadPosition = cellPosition(cell.x, cell.z, 0.86);
+
+      if (!body || !head) {
+        bodyPositionRef.current.copyFrom(settledBodyPosition);
+        headPositionRef.current.copyFrom(settledHeadPosition);
+        visualPositionRef.current.copyFrom(settledBodyPosition);
+      }
+
+      return;
+    }
+
+    const startBodyPosition = cellPosition(activeMove.from.x, activeMove.from.z, 0.44);
+    const startHeadPosition = cellPosition(activeMove.from.x, activeMove.from.z, 0.86);
+    const targetBodyPosition = cellPosition(activeMove.to.x, activeMove.to.z, 0.44);
+    const targetHeadPosition = cellPosition(activeMove.to.x, activeMove.to.z, 0.86);
+
+    if (!body || !head) {
+      bodyPositionRef.current.copyFrom(targetBodyPosition);
+      headPositionRef.current.copyFrom(targetHeadPosition);
+      visualPositionRef.current.copyFrom(targetBodyPosition);
+      onMoveComplete(activeMove);
+      return;
+    }
+
+    const start = performance.now();
+
+    const observer = scene.onBeforeRenderObservable.add(() => {
+      const progress = Math.min(1, (performance.now() - start) / playerMoveDurationMs);
+      const bodyPosition = Vector3.Lerp(startBodyPosition, targetBodyPosition, progress);
+      const headPosition = Vector3.Lerp(startHeadPosition, targetHeadPosition, progress);
+
+      body.position.copyFrom(bodyPosition);
+      head.position.copyFrom(headPosition);
+      bodyPositionRef.current.copyFrom(body.position);
+      headPositionRef.current.copyFrom(head.position);
+      visualPositionRef.current.copyFrom(body.position);
+
+      if (progress >= 1) {
+        scene.onBeforeRenderObservable.remove(observer);
+        onMoveComplete(activeMove);
+      }
+    });
+
+    return () => {
+      scene.onBeforeRenderObservable.remove(observer);
+    };
+  }, [activeMove, cell.x, cell.z, onMoveComplete, scene, visualPositionRef]);
+
   return (
     <>
       <sphere
         name="player-body"
-        position={cellPosition(cell.x, cell.z, 0.44)}
+        position={bodyPositionRef.current}
         options={{ diameter: 0.58, segments: 32 }}
       >
         <standardMaterial
           name="player-body-material"
           diffuseColor={Color3.FromHexString("#F8FAFC")}
-          emissiveColor={Color3.FromHexString(arena.palette.accent)}
-          specularColor={Color3.FromHexString("#FFFFFF")}
+          emissiveColor={Color3.FromHexString(isTopDown ? "#000000" : arena.palette.accent)}
+          specularColor={Color3.FromHexString(isTopDown ? "#000000" : "#FFFFFF")}
         />
       </sphere>
       <sphere
         name="player-head"
-        position={cellPosition(cell.x, cell.z, 0.86)}
+        position={headPositionRef.current}
         options={{ diameter: 0.34, segments: 24 }}
       >
         <standardMaterial
           name="player-head-material"
           diffuseColor={Color3.FromHexString("#111827")}
-          emissiveColor={Color3.FromHexString(arena.palette.secondary)}
-          specularColor={Color3.FromHexString("#FFFFFF")}
+          emissiveColor={Color3.FromHexString(isTopDown ? "#000000" : arena.palette.secondary)}
+          specularColor={Color3.FromHexString(isTopDown ? "#000000" : "#FFFFFF")}
         />
       </sphere>
     </>
@@ -739,7 +980,7 @@ function configureOrthographicCamera(camera: ArcRotateCamera, scene: BabylonScen
 function resolveMoveDirection(
   scene: BabylonScene,
   viewMode: ViewMode,
-  command: "forward" | "backward" | "left" | "right"
+  command: MoveCommand
 ) {
   if (viewMode === "top_down") {
     return topDownDirection(command);
@@ -758,7 +999,7 @@ function resolveMoveDirection(
 
   forward.normalize();
   const snappedForward = snapToGrid(forward);
-  const snappedRight = { x: -snappedForward.z, z: snappedForward.x };
+  const snappedRight = { x: snappedForward.z, z: -snappedForward.x };
 
   switch (command) {
     case "forward":
@@ -772,17 +1013,65 @@ function resolveMoveDirection(
   }
 }
 
-function topDownDirection(command: "forward" | "backward" | "left" | "right") {
+function topDownDirection(command: MoveCommand) {
   switch (command) {
     case "forward":
-      return { x: 0, z: -1 };
-    case "backward":
       return { x: 0, z: 1 };
+    case "backward":
+      return { x: 0, z: -1 };
     case "left":
       return { x: -1, z: 0 };
     case "right":
       return { x: 1, z: 0 };
   }
+}
+
+function moveCommandForKey(key: string): MoveCommand | null {
+  switch (key) {
+    case "arrowup":
+    case "w":
+      return "forward";
+    case "arrowdown":
+    case "s":
+      return "backward";
+    case "arrowleft":
+    case "a":
+      return "left";
+    case "arrowright":
+    case "d":
+      return "right";
+    default:
+      return null;
+  }
+}
+
+function materialLookForView(kind: ArenaElementKind, look: MaterialLook, isTopDown: boolean): MaterialLook {
+  if (!isTopDown) {
+    return look;
+  }
+
+  const topDownDiffuseByKind: Record<ArenaElementKind, string> = {
+    floor: "#334155",
+    wall: "#CBD5E1",
+    crate: "#B45309",
+    bomb: "#111827"
+  };
+
+  return {
+    diffuse: topDownDiffuseByKind[kind],
+    emissive: "#000000",
+    specular: "#000000",
+    alpha: 1
+  };
+}
+
+function crateVisualVariant(cell: Cell) {
+  const seed = Math.abs(cell.x * 31 + cell.z * 17);
+
+  return {
+    heightOffset: Math.sin(seed) * 0.02,
+    rotationY: (seed % 4) * 0.08
+  };
 }
 
 function snapToGrid(vector: Vector3): Cell {
@@ -916,4 +1205,11 @@ function cellKey(cell: Cell) {
 
 function cellPosition(x: number, z: number, y: number) {
   return new Vector3(x - center, y, z - center);
+}
+
+function nearestCellFromPosition(position: Vector3): Cell {
+  return {
+    x: Math.min(size - 1, Math.max(0, Math.round(position.x + center))),
+    z: Math.min(size - 1, Math.max(0, Math.round(position.z + center)))
+  };
 }
