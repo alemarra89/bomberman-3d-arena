@@ -19,6 +19,7 @@ interface ArenaContentProps {
   arena: ArenaState;
   viewMode: ViewMode;
   onHudChange?: (hud: ArenaHudState) => void;
+  key?: number;
 }
 
 interface Cell {
@@ -28,7 +29,9 @@ interface Cell {
 
 type MoveCommand = "forward" | "backward" | "left" | "right";
 type ArenaElementKind = "floor" | "wall" | "crate" | "bomb";
-type PowerUpType = "bomb_capacity" | "blast_radius";
+type PowerUpType = "bomb_capacity" | "blast_radius" | "speed_up" | "bomb_kick" | "throw_bomb";
+type GameStatus = "playing" | "won" | "lost";
+type EnemyType = "wanderer" | "chaser" | "ghost";
 
 export interface ArenaHudState {
   elapsedSeconds: number;
@@ -36,6 +39,11 @@ export interface ArenaHudState {
   bombCapacity: number;
   blastRadius: number;
   collectedPowerUps: number;
+  enemiesRemaining: number;
+  speedLevel: number;
+  canKickBombs: boolean;
+  canThrowBombs: boolean;
+  status: GameStatus;
 }
 
 interface ActiveBomb {
@@ -57,6 +65,14 @@ interface ActivePowerUp {
   type: PowerUpType;
 }
 
+interface ActiveEnemy {
+  id: string;
+  type: EnemyType;
+  cell: Cell;
+  direction: Cell;
+  nextMoveAt: number;
+}
+
 interface ActivePlayerMove {
   id: number;
   from: Cell;
@@ -69,10 +85,13 @@ const playerStart: Cell = { x: center, z: size - 2 };
 const bombFuseMs = 3000;
 const initialBlastRadius = 1;
 const directedExplosionRadius = 3;
-const playerMoveDurationMs = 400;
+const basePlayerMoveDurationMs = 400;
+const minimumPlayerMoveDurationMs = 220;
+const speedUpStepMs = 35;
 const playerInputPollMs = 16;
 const playerTurnBufferMs = 180;
 const initialBombCapacity = 1;
+const enemyTickMs = 80;
 
 export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps) {
   const scene = useScene();
@@ -91,6 +110,8 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
   const wallSet = useMemo(() => toCellSet(wallCells), [wallCells]);
   const floorCells = useMemo(() => createFloorCells(), []);
   const initialDestructibles = useMemo(() => createDestructibleCells(wallSet), [wallSet]);
+  const initialDestructibleSet = useMemo(() => toCellSet(initialDestructibles), [initialDestructibles]);
+  const initialEnemies = useMemo(() => createInitialEnemies(wallSet, initialDestructibleSet), [initialDestructibleSet, wallSet]);
 
   const [playerCell, setPlayerCell] = useState<Cell>(playerStart);
   const [activePlayerMove, setActivePlayerMove] = useState<ActivePlayerMove | null>(null);
@@ -98,14 +119,21 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
   const [bombs, setBombs] = useState<ActiveBomb[]>([]);
   const [blasts, setBlasts] = useState<ActiveBlast[]>([]);
   const [powerUps, setPowerUps] = useState<ActivePowerUp[]>([]);
+  const [enemies, setEnemies] = useState<ActiveEnemy[]>(initialEnemies);
   const [bombCapacity, setBombCapacity] = useState(initialBombCapacity);
   const [blastRadius, setBlastRadius] = useState(initialBlastRadius);
   const [collectedPowerUps, setCollectedPowerUps] = useState(0);
+  const [speedLevel, setSpeedLevel] = useState(0);
+  const [canKickBombs, setCanKickBombs] = useState(false);
+  const [canThrowBombs, setCanThrowBombs] = useState(false);
+  const [gameStatus, setGameStatus] = useState<GameStatus>("playing");
   const bombCellSetRef = useRef<Set<string>>(new Set());
   const bombTimerIdsRef = useRef<Map<number, number>>(new Map());
   const bombsRef = useRef<ActiveBomb[]>([]);
+  const blastsRef = useRef<ActiveBlast[]>([]);
   const destructibleCellsRef = useRef(destructibleCells);
   const powerUpsRef = useRef<ActivePowerUp[]>([]);
+  const enemiesRef = useRef<ActiveEnemy[]>(initialEnemies);
   const playerVisualPositionRef = useRef(cellPosition(playerStart.x, playerStart.z, 0.44));
   const playerCellRef = useRef(playerStart);
   const activePlayerMoveRef = useRef<ActivePlayerMove | null>(null);
@@ -113,6 +141,10 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
   const heldMoveCommandsRef = useRef<Map<string, MoveCommand>>(new Map());
   const bufferedMoveRef = useRef<{ command: MoveCommand; expiresAt: number } | null>(null);
   const gameStartedAtRef = useRef(performance.now());
+  const gameEndedAtRef = useRef<number | null>(null);
+  const gameStatusRef = useRef<GameStatus>("playing");
+  const lastPlayerDirectionRef = useRef<Cell>({ x: 0, z: -1 });
+  const playerMoveDurationMs = Math.max(minimumPlayerMoveDurationMs, basePlayerMoveDurationMs - speedLevel * speedUpStepMs);
 
   useSceneRuntime(scene, arena);
 
@@ -136,6 +168,18 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
     powerUpsRef.current = powerUps;
   }, [powerUps]);
 
+  useEffect(() => {
+    enemiesRef.current = enemies;
+  }, [enemies]);
+
+  useEffect(() => {
+    blastsRef.current = blasts;
+  }, [blasts]);
+
+  useEffect(() => {
+    gameStatusRef.current = gameStatus;
+  }, [gameStatus]);
+
   useEffect(
     () => () => {
       for (const timerId of bombTimerIdsRef.current.values()) {
@@ -148,13 +192,29 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
 
   const emitHud = useCallback(() => {
     onHudChange?.({
-      elapsedSeconds: Math.floor((performance.now() - gameStartedAtRef.current) / 1000),
+      elapsedSeconds: Math.floor(((gameEndedAtRef.current ?? performance.now()) - gameStartedAtRef.current) / 1000),
       availableBombs: Math.max(0, bombCapacity - bombs.length),
       bombCapacity,
       blastRadius,
-      collectedPowerUps
+      collectedPowerUps,
+      enemiesRemaining: enemies.length,
+      speedLevel,
+      canKickBombs,
+      canThrowBombs,
+      status: gameStatus
     });
-  }, [blastRadius, bombCapacity, bombs.length, collectedPowerUps, onHudChange]);
+  }, [
+    blastRadius,
+    bombCapacity,
+    bombs.length,
+    canKickBombs,
+    canThrowBombs,
+    collectedPowerUps,
+    enemies.length,
+    gameStatus,
+    onHudChange,
+    speedLevel
+  ]);
 
   useEffect(() => {
     emitHud();
@@ -164,6 +224,20 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
     };
   }, [emitHud]);
 
+  const finishGame = useCallback((status: Exclude<GameStatus, "playing">) => {
+    if (gameStatusRef.current !== "playing") {
+      return;
+    }
+
+    gameStatusRef.current = status;
+    gameEndedAtRef.current = performance.now();
+    heldMoveCommandsRef.current.clear();
+    bufferedMoveRef.current = null;
+    activePlayerMoveRef.current = null;
+    setActivePlayerMove(null);
+    setGameStatus(status);
+  }, []);
+
   const explodeBombCascade = useCallback(
     (firstBomb: ActiveBomb) => {
       const pendingBombs = [firstBomb];
@@ -171,7 +245,9 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
       let nextBombs = bombsRef.current;
       let nextDestructibles = destructibleCellsRef.current;
       let nextPowerUps = powerUpsRef.current;
+      let nextEnemies = enemiesRef.current;
       const nextBlasts: ActiveBlast[] = [];
+      let playerWasHit = false;
 
       while (pendingBombs.length > 0) {
         const activeBomb = pendingBombs.shift();
@@ -196,6 +272,7 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
         const blastCells = computeBlastCells(activeBomb.cell, activeBomb.radius, wallSet, currentDestructibleSet);
         const blastCellKeys = new Set(blastCells.map(cellKey));
         const destroyedCrates = nextDestructibles.filter(cell => blastCellKeys.has(cellKey(cell)));
+        const currentPlayerCell = nearestCellFromPosition(playerVisualPositionRef.current);
 
         nextDestructibles = nextDestructibles.filter(cell => !blastCellKeys.has(cellKey(cell)));
         nextPowerUps = [
@@ -205,6 +282,8 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
             return drop ? [{ id: `powerup-${cell.x}-${cell.z}`, cell, type: drop }] : [];
           })
         ];
+        nextEnemies = nextEnemies.filter(enemy => !blastCellKeys.has(cellKey(enemy.cell)));
+        playerWasHit ||= blastCellKeys.has(cellKey(currentPlayerCell));
 
         nextBlasts.push({
           id: activeBomb.id,
@@ -222,6 +301,7 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
       bombsRef.current = nextBombs;
       destructibleCellsRef.current = nextDestructibles;
       powerUpsRef.current = nextPowerUps;
+      enemiesRef.current = nextEnemies;
       bombCellSetRef.current = toCellSet(nextBombs.map(activeBomb => activeBomb.cell));
       bombSetRef.current = bombCellSetRef.current;
       destructibleSetRef.current = toCellSet(nextDestructibles);
@@ -229,18 +309,31 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
       setBombs(nextBombs);
       setDestructibleCells(nextDestructibles);
       setPowerUps(nextPowerUps);
-      setBlasts(currentBlasts => [...currentBlasts, ...nextBlasts]);
+      setEnemies(nextEnemies);
+      blastsRef.current = [...blastsRef.current, ...nextBlasts];
+      setBlasts(blastsRef.current);
+
+      if (playerWasHit) {
+        finishGame("lost");
+      } else if (nextEnemies.length === 0) {
+        finishGame("won");
+      }
 
       for (const blast of nextBlasts) {
         window.setTimeout(() => {
-          setBlasts(currentBlasts => currentBlasts.filter(currentBlast => currentBlast.id !== blast.id));
+          blastsRef.current = blastsRef.current.filter(currentBlast => currentBlast.id !== blast.id);
+          setBlasts(blastsRef.current);
         }, 1500);
       }
     },
-    [arena.theme, wallSet]
+    [arena.theme, finishGame, wallSet]
   );
 
   const placeBomb = useCallback(() => {
+    if (gameStatusRef.current !== "playing") {
+      return;
+    }
+
     if (bombsRef.current.length >= bombCapacity) {
       return;
     }
@@ -272,9 +365,87 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
     bombTimerIdsRef.current.set(activeBomb.id, timerId);
   }, [blastRadius, bombCapacity, explodeBombCascade]);
 
+  const relocateBomb = useCallback(
+    (bombToMove: ActiveBomb, destination: Cell) => {
+      const nextBombs = bombsRef.current.map(activeBomb =>
+        activeBomb.id === bombToMove.id ? { ...activeBomb, cell: destination } : activeBomb
+      );
+      bombsRef.current = nextBombs;
+      bombCellSetRef.current = toCellSet(nextBombs.map(activeBomb => activeBomb.cell));
+      bombSetRef.current = bombCellSetRef.current;
+      setBombs(nextBombs);
+
+      const movedBomb = nextBombs.find(activeBomb => activeBomb.id === bombToMove.id);
+      if (movedBomb && isCellInActiveBlast(destination, blastsRef.current)) {
+        explodeBombCascade(movedBomb);
+      }
+    },
+    [explodeBombCascade]
+  );
+
+  const tryKickBomb = useCallback(
+    (bombCell: Cell, direction: Cell) => {
+      const bombToKick = bombsRef.current.find(activeBomb => sameCell(activeBomb.cell, bombCell));
+      if (!bombToKick) {
+        return false;
+      }
+
+      let currentCell = bombCell;
+      let nextCell = { x: currentCell.x + direction.x, z: currentCell.z + direction.z };
+      while (
+        isBombTravelCellFree(nextCell, wallSet, destructibleSetRef.current, bombCellSetRef.current, bombCell)
+      ) {
+        currentCell = nextCell;
+        nextCell = { x: currentCell.x + direction.x, z: currentCell.z + direction.z };
+      }
+
+      if (sameCell(currentCell, bombCell)) {
+        return false;
+      }
+
+      relocateBomb(bombToKick, currentCell);
+      return true;
+    },
+    [relocateBomb, wallSet]
+  );
+
+  const throwBomb = useCallback(() => {
+    if (gameStatusRef.current !== "playing" || !canThrowBombs) {
+      return;
+    }
+
+    const playerCurrentCell = nearestCellFromPosition(playerVisualPositionRef.current);
+    const bombToThrow = bombsRef.current.find(activeBomb => sameCell(activeBomb.cell, playerCurrentCell));
+    if (!bombToThrow) {
+      return;
+    }
+
+    const destination = findThrownBombLandingCell(
+      playerCurrentCell,
+      lastPlayerDirectionRef.current,
+      wallSet,
+      destructibleSetRef.current,
+      bombCellSetRef.current
+    );
+    if (!destination) {
+      return;
+    }
+
+    relocateBomb(bombToThrow, destination);
+  }, [canThrowBombs, relocateBomb, wallSet]);
+
   const startPlayerMoveFromCell = useCallback(
     (from: Cell, direction: Cell) => {
+      if (gameStatusRef.current !== "playing") {
+        return false;
+      }
+
       const to = { x: from.x + direction.x, z: from.z + direction.z };
+      const destinationHasBomb = bombSetRef.current.has(cellKey(to));
+      if (destinationHasBomb && (!canKickBombs || !tryKickBomb(to, direction))) {
+        return false;
+      }
+
       if (!isWalkable(to, wallSet, destructibleSetRef.current, bombSetRef.current)) {
         return false;
       }
@@ -286,10 +457,11 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
       };
       playerMoveIdRef.current = move.id;
       activePlayerMoveRef.current = move;
+      lastPlayerDirectionRef.current = direction;
       setActivePlayerMove(move);
       return true;
     },
-    [wallSet]
+    [canKickBombs, tryKickBomb, wallSet]
   );
 
   const collectPowerUpAtCell = useCallback((cell: Cell) => {
@@ -303,10 +475,22 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
     setPowerUps(nextPowerUps);
     setCollectedPowerUps(currentCount => currentCount + 1);
 
-    if (collectedPowerUp.type === "bomb_capacity") {
-      setBombCapacity(currentCapacity => currentCapacity + 1);
-    } else {
-      setBlastRadius(currentRadius => currentRadius + 1);
+    switch (collectedPowerUp.type) {
+      case "bomb_capacity":
+        setBombCapacity(currentCapacity => currentCapacity + 1);
+        break;
+      case "blast_radius":
+        setBlastRadius(currentRadius => currentRadius + 1);
+        break;
+      case "speed_up":
+        setSpeedLevel(currentSpeed => currentSpeed + 1);
+        break;
+      case "bomb_kick":
+        setCanKickBombs(true);
+        break;
+      case "throw_bomb":
+        setCanThrowBombs(true);
+        break;
     }
   }, []);
 
@@ -354,11 +538,16 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
       setPlayerCell(move.to);
       collectPowerUpAtCell(move.to);
 
+      if (isCellInActiveBlast(move.to, blastsRef.current) || enemyOccupiesCell(move.to, enemiesRef.current)) {
+        finishGame("lost");
+        return;
+      }
+
       if (!tryStartRequestedMoveFromCell(move.to)) {
         setActivePlayerMove(null);
       }
     },
-    [collectPowerUpAtCell, tryStartRequestedMoveFromCell]
+    [collectPowerUpAtCell, finishGame, tryStartRequestedMoveFromCell]
   );
 
   useEffect(() => {
@@ -396,6 +585,10 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (gameStatusRef.current !== "playing") {
+        return;
+      }
+
       const target = event.target as HTMLElement | null;
       const isTypingTarget =
         target?.tagName === "TEXTAREA" || target?.tagName === "INPUT" || target?.isContentEditable === true;
@@ -422,6 +615,9 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
       } else if ((key === " " || key === "b") && !event.repeat) {
         event.preventDefault();
         placeBomb();
+      } else if (key === "t" && !event.repeat) {
+        event.preventDefault();
+        throwBomb();
       }
     };
 
@@ -453,7 +649,78 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
       canvas?.removeEventListener("pointerdown", focusCanvas);
       clearHeldMovement();
     };
-  }, [placeBomb, tryStartRequestedMoveFromCell]);
+  }, [placeBomb, throwBomb, tryStartRequestedMoveFromCell]);
+
+  useEffect(() => {
+    const timerId = window.setInterval(() => {
+      if (gameStatusRef.current !== "playing") {
+        return;
+      }
+
+      const now = performance.now();
+      const currentEnemies = enemiesRef.current;
+      if (currentEnemies.length === 0) {
+        return;
+      }
+
+      const occupiedEnemyCells = new Set(currentEnemies.map(enemy => cellKey(enemy.cell)));
+      const nextEnemies = currentEnemies.map(enemy => {
+        if (enemy.nextMoveAt > now) {
+          return enemy;
+        }
+
+        occupiedEnemyCells.delete(cellKey(enemy.cell));
+        const nextDirection = chooseEnemyDirection(
+          enemy,
+          playerCellRef.current,
+          wallSet,
+          destructibleSetRef.current,
+          bombSetRef.current,
+          occupiedEnemyCells
+        );
+        const nextCell = nextDirection
+          ? { x: enemy.cell.x + nextDirection.x, z: enemy.cell.z + nextDirection.z }
+          : enemy.cell;
+        const movedEnemy = {
+          ...enemy,
+          cell: nextCell,
+          direction: nextDirection ?? enemy.direction,
+          nextMoveAt: now + enemyMoveIntervalMs(enemy.type)
+        };
+        occupiedEnemyCells.add(cellKey(movedEnemy.cell));
+        return movedEnemy;
+      });
+
+      enemiesRef.current = nextEnemies;
+      setEnemies(nextEnemies);
+
+      const playerCurrentCell = nearestCellFromPosition(playerVisualPositionRef.current);
+      const enemyTouchedPlayer = nextEnemies.some(enemy => sameCell(enemy.cell, playerCurrentCell));
+      if (
+        enemyTouchedPlayer ||
+        nextEnemies.some(enemy => isCellInActiveBlast(enemy.cell, blastsRef.current))
+      ) {
+        const survivingEnemies = nextEnemies.filter(enemy => !isCellInActiveBlast(enemy.cell, blastsRef.current));
+        if (survivingEnemies.length !== nextEnemies.length) {
+          enemiesRef.current = survivingEnemies;
+          setEnemies(survivingEnemies);
+        }
+
+        if (enemyTouchedPlayer) {
+          finishGame("lost");
+          return;
+        }
+
+        if (survivingEnemies.length === 0) {
+          finishGame("won");
+        }
+      }
+    }, enemyTickMs);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [finishGame, wallSet]);
 
   return (
     <>
@@ -567,11 +834,16 @@ export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps
         <PowerUpToken key={powerUp.id} powerUp={powerUp} isTopDown={isTopDown} />
       ))}
 
+      {enemies.map(enemy => (
+        <EnemyToken key={enemy.id} enemy={enemy} isTopDown={isTopDown} />
+      ))}
+
       <Player
         cell={playerCell}
         activeMove={activePlayerMove}
         arena={arena}
         isTopDown={isTopDown}
+        moveDurationMs={playerMoveDurationMs}
         visualPositionRef={playerVisualPositionRef}
         onMoveComplete={completePlayerMove}
       />
@@ -722,6 +994,7 @@ function Player({
   activeMove,
   arena,
   isTopDown,
+  moveDurationMs,
   visualPositionRef,
   onMoveComplete
 }: {
@@ -729,6 +1002,7 @@ function Player({
   activeMove: ActivePlayerMove | null;
   arena: ArenaState;
   isTopDown: boolean;
+  moveDurationMs: number;
   visualPositionRef: { current: Vector3 };
   onMoveComplete: (move: ActivePlayerMove) => void;
 }) {
@@ -768,7 +1042,7 @@ function Player({
     const start = performance.now();
 
     const observer = scene.onBeforeRenderObservable.add(() => {
-      const progress = Math.min(1, (performance.now() - start) / playerMoveDurationMs);
+      const progress = Math.min(1, (performance.now() - start) / moveDurationMs);
       const bodyPosition = Vector3.Lerp(startBodyPosition, targetBodyPosition, progress);
       const headPosition = Vector3.Lerp(startHeadPosition, targetHeadPosition, progress);
 
@@ -787,7 +1061,7 @@ function Player({
     return () => {
       scene.onBeforeRenderObservable.remove(observer);
     };
-  }, [activeMove, cell.x, cell.z, onMoveComplete, scene, visualPositionRef]);
+  }, [activeMove, cell.x, cell.z, moveDurationMs, onMoveComplete, scene, visualPositionRef]);
 
   return (
     <>
@@ -857,8 +1131,7 @@ function ParticleMotes({ arena }: { arena: ArenaState }) {
 }
 
 function PowerUpToken({ powerUp, isTopDown }: { powerUp: ActivePowerUp; isTopDown: boolean; key?: string }) {
-  const isBombCapacity = powerUp.type === "bomb_capacity";
-  const color = isBombCapacity ? "#22D3EE" : "#F59E0B";
+  const look = powerUpLook(powerUp.type);
 
   return (
     <cylinder
@@ -866,17 +1139,42 @@ function PowerUpToken({ powerUp, isTopDown }: { powerUp: ActivePowerUp; isTopDow
       position={cellPosition(powerUp.cell.x, powerUp.cell.z, 0.18)}
       options={{
         height: isTopDown ? 0.18 : 0.22,
-        diameter: isBombCapacity ? 0.46 : 0.52,
-        tessellation: isBombCapacity ? 6 : 24
+        diameter: look.diameter,
+        tessellation: look.tessellation
       }}
     >
       <standardMaterial
         name={`powerup-material-${powerUp.type}-${powerUp.cell.x}-${powerUp.cell.z}`}
-        diffuseColor={Color3.FromHexString(color)}
-        emissiveColor={Color3.FromHexString(isTopDown ? "#000000" : color)}
+        diffuseColor={Color3.FromHexString(look.color)}
+        emissiveColor={Color3.FromHexString(isTopDown ? "#000000" : look.color)}
         specularColor={Color3.FromHexString(isTopDown ? "#000000" : "#FFFFFF")}
       />
     </cylinder>
+  );
+}
+
+function EnemyToken({ enemy, isTopDown }: { enemy: ActiveEnemy; isTopDown: boolean; key?: string }) {
+  const colorByType: Record<EnemyType, string> = {
+    wanderer: "#EF4444",
+    chaser: "#EC4899",
+    ghost: "#A78BFA"
+  };
+  const color = colorByType[enemy.type];
+
+  return (
+    <sphere
+      name={`enemy-${enemy.id}`}
+      position={cellPosition(enemy.cell.x, enemy.cell.z, 0.42)}
+      options={{ diameter: enemy.type === "ghost" ? 0.54 : 0.62, segments: 20 }}
+    >
+      <standardMaterial
+        name={`enemy-material-${enemy.id}`}
+        diffuseColor={Color3.FromHexString(color)}
+        emissiveColor={Color3.FromHexString(isTopDown ? "#000000" : color)}
+        specularColor={Color3.FromHexString(isTopDown ? "#000000" : "#FFFFFF")}
+        alpha={enemy.type === "ghost" ? 0.82 : 1}
+      />
+    </sphere>
   );
 }
 
@@ -1224,7 +1522,7 @@ function crateVisualVariant(cell: Cell) {
 }
 
 function powerUpDropForCell(cell: Cell): PowerUpType | null {
-  const seed = Math.abs(cell.x * 11 + cell.z * 5 + cell.x * cell.x + cell.z * cell.z) % 18;
+  const seed = Math.abs(cell.x * 11 + cell.z * 5 + cell.x * cell.x + cell.z * cell.z) % 23;
   if (seed <= 1) {
     return "bomb_capacity";
   }
@@ -1233,7 +1531,34 @@ function powerUpDropForCell(cell: Cell): PowerUpType | null {
     return "blast_radius";
   }
 
+  if (seed === 4 || seed === 5) {
+    return "speed_up";
+  }
+
+  if (seed === 6) {
+    return "bomb_kick";
+  }
+
+  if (seed === 7) {
+    return "throw_bomb";
+  }
+
   return null;
+}
+
+function powerUpLook(type: PowerUpType) {
+  switch (type) {
+    case "bomb_capacity":
+      return { color: "#22D3EE", diameter: 0.46, tessellation: 6 };
+    case "blast_radius":
+      return { color: "#F59E0B", diameter: 0.52, tessellation: 24 };
+    case "speed_up":
+      return { color: "#22C55E", diameter: 0.48, tessellation: 3 };
+    case "bomb_kick":
+      return { color: "#F43F5E", diameter: 0.5, tessellation: 4 };
+    case "throw_bomb":
+      return { color: "#A78BFA", diameter: 0.5, tessellation: 5 };
+  }
 }
 
 function snapToGrid(vector: Vector3): Cell {
@@ -1293,6 +1618,131 @@ function createDestructibleCells(wallSet: Set<string>): Cell[] {
   return cells;
 }
 
+function createInitialEnemies(wallSet: Set<string>, destructibleSet: Set<string>): ActiveEnemy[] {
+  const candidateCells: Cell[] = [];
+
+  for (let x = 1; x < size - 1; x += 1) {
+    for (let z = 1; z < size - 1; z += 1) {
+      const cell = { x, z };
+      if (
+        wallSet.has(cellKey(cell)) ||
+        destructibleSet.has(cellKey(cell)) ||
+        isSpawnSafeCell(cell) ||
+        manhattanDistance(cell, playerStart) < 8
+      ) {
+        continue;
+      }
+
+      candidateCells.push(cell);
+    }
+  }
+
+  return candidateCells
+    .sort((a, b) => enemySpawnScore(b) - enemySpawnScore(a))
+    .slice(0, 6)
+    .map((cell, index) => ({
+      id: `enemy-${index}`,
+      type: enemyTypeForIndex(index),
+      cell,
+      direction: index % 2 === 0 ? { x: 1, z: 0 } : { x: 0, z: 1 },
+      nextMoveAt: performance.now() + 450 + index * 120
+    }));
+}
+
+function enemySpawnScore(cell: Cell) {
+  return manhattanDistance(cell, playerStart) * 100 + ((cell.x * 19 + cell.z * 31) % 17);
+}
+
+function enemyTypeForIndex(index: number): EnemyType {
+  if (index === 1 || index === 4) {
+    return "chaser";
+  }
+
+  if (index === 2) {
+    return "ghost";
+  }
+
+  return "wanderer";
+}
+
+function enemyMoveIntervalMs(type: EnemyType) {
+  switch (type) {
+    case "chaser":
+      return 520;
+    case "ghost":
+      return 680;
+    case "wanderer":
+      return 620;
+  }
+}
+
+function chooseEnemyDirection(
+  enemy: ActiveEnemy,
+  playerCell: Cell,
+  wallSet: Set<string>,
+  destructibleSet: Set<string>,
+  bombSet: Set<string>,
+  occupiedEnemyCells: Set<string>
+): Cell | null {
+  const directions = [
+    { x: 1, z: 0 },
+    { x: -1, z: 0 },
+    { x: 0, z: 1 },
+    { x: 0, z: -1 }
+  ];
+
+  const availableDirections = directions.filter(direction =>
+    isEnemyDestinationFree(
+      { x: enemy.cell.x + direction.x, z: enemy.cell.z + direction.z },
+      enemy.type,
+      wallSet,
+      destructibleSet,
+      bombSet,
+      occupiedEnemyCells
+    )
+  );
+  if (availableDirections.length === 0) {
+    return null;
+  }
+
+  if (enemy.type === "chaser") {
+    return availableDirections.sort((a, b) => {
+      const distanceA = manhattanDistance({ x: enemy.cell.x + a.x, z: enemy.cell.z + a.z }, playerCell);
+      const distanceB = manhattanDistance({ x: enemy.cell.x + b.x, z: enemy.cell.z + b.z }, playerCell);
+      return distanceA - distanceB;
+    })[0];
+  }
+
+  const forwardDirection = availableDirections.find(direction => sameCell(direction, enemy.direction));
+  if (forwardDirection && enemy.type === "ghost") {
+    return forwardDirection;
+  }
+
+  const seed = Math.abs(enemy.cell.x * 17 + enemy.cell.z * 29 + enemy.id.length * 13);
+  return availableDirections[seed % availableDirections.length];
+}
+
+function isEnemyDestinationFree(
+  cell: Cell,
+  type: EnemyType,
+  wallSet: Set<string>,
+  destructibleSet: Set<string>,
+  bombSet: Set<string>,
+  occupiedEnemyCells: Set<string>
+) {
+  if (cell.x < 1 || cell.x >= size - 1 || cell.z < 1 || cell.z >= size - 1) {
+    return false;
+  }
+
+  const key = cellKey(cell);
+  return (
+    !wallSet.has(key) &&
+    (type === "ghost" || !destructibleSet.has(key)) &&
+    !bombSet.has(key) &&
+    !occupiedEnemyCells.has(key)
+  );
+}
+
 function computeBlastCells(origin: Cell, radius: number, wallSet: Set<string>, destructibleSet: Set<string>): Cell[] {
   const cells = [origin];
   const directions = [
@@ -1328,6 +1778,51 @@ function isWalkable(cell: Cell, wallSet: Set<string>, destructibleSet: Set<strin
 
   const key = cellKey(cell);
   return !wallSet.has(key) && !destructibleSet.has(key) && !bombSet.has(key);
+}
+
+function isBombTravelCellFree(
+  cell: Cell,
+  wallSet: Set<string>,
+  destructibleSet: Set<string>,
+  bombSet: Set<string>,
+  ignoredBombCell: Cell
+) {
+  if (cell.x < 1 || cell.x >= size - 1 || cell.z < 1 || cell.z >= size - 1) {
+    return false;
+  }
+
+  const key = cellKey(cell);
+  const ignoredKey = cellKey(ignoredBombCell);
+  return !wallSet.has(key) && !destructibleSet.has(key) && (!bombSet.has(key) || key === ignoredKey);
+}
+
+function findThrownBombLandingCell(
+  origin: Cell,
+  direction: Cell,
+  wallSet: Set<string>,
+  destructibleSet: Set<string>,
+  bombSet: Set<string>
+) {
+  for (let distance = 3; distance >= 1; distance -= 1) {
+    const candidate = { x: origin.x + direction.x * distance, z: origin.z + direction.z * distance };
+    if (isWalkable(candidate, wallSet, destructibleSet, bombSet)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function isCellInActiveBlast(cell: Cell, blasts: ActiveBlast[]) {
+  return blasts.some(blast => blast.cells.some(blastCell => sameCell(blastCell, cell)));
+}
+
+function enemyOccupiesCell(cell: Cell, enemies: ActiveEnemy[]) {
+  return enemies.some(enemy => sameCell(enemy.cell, cell));
+}
+
+function manhattanDistance(a: Cell, b: Cell) {
+  return Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
 }
 
 function isSpawnSafeCell(cell: Cell) {

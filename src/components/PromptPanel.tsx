@@ -73,7 +73,7 @@ export function PromptPanel({ director, viewMode, setViewMode }: PromptPanelProp
         >
           Piazza bomba
         </button>
-        <span>WASD / frecce muovi | Spazio o B bomba</span>
+        <span>WASD / frecce muovi | Spazio o B bomba | T lancia bomba con guanto</span>
       </div>
 
       <div className="view-mode-switch" role="tablist" aria-label="Modalita vista">
