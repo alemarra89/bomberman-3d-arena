@@ -18,6 +18,7 @@ import type { ArenaState, ExplosionCue, ExplosionStyle, ViewMode } from "../type
 interface ArenaContentProps {
   arena: ArenaState;
   viewMode: ViewMode;
+  onHudChange?: (hud: ArenaHudState) => void;
 }
 
 interface Cell {
@@ -27,6 +28,15 @@ interface Cell {
 
 type MoveCommand = "forward" | "backward" | "left" | "right";
 type ArenaElementKind = "floor" | "wall" | "crate" | "bomb";
+type PowerUpType = "bomb_capacity" | "blast_radius";
+
+export interface ArenaHudState {
+  elapsedSeconds: number;
+  availableBombs: number;
+  bombCapacity: number;
+  blastRadius: number;
+  collectedPowerUps: number;
+}
 
 interface ActiveBomb {
   id: number;
@@ -41,6 +51,12 @@ interface ActiveBlast {
   style: ExplosionStyle;
 }
 
+interface ActivePowerUp {
+  id: string;
+  cell: Cell;
+  type: PowerUpType;
+}
+
 interface ActivePlayerMove {
   id: number;
   from: Cell;
@@ -51,12 +67,14 @@ const size = 23;
 const center = (size - 1) / 2;
 const playerStart: Cell = { x: center, z: size - 2 };
 const bombFuseMs = 3000;
-const defaultBombRadius = 3;
+const initialBlastRadius = 1;
+const directedExplosionRadius = 3;
 const playerMoveDurationMs = 400;
 const playerInputPollMs = 16;
 const playerTurnBufferMs = 180;
+const initialBombCapacity = 1;
 
-export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
+export function ArenaContent({ arena, viewMode, onHudChange }: ArenaContentProps) {
   const scene = useScene();
   const floor = floorLooks[arena.floor];
   const walls = wallLooks[arena.walls];
@@ -79,14 +97,22 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
   const [destructibleCells, setDestructibleCells] = useState<Cell[]>(initialDestructibles);
   const [bombs, setBombs] = useState<ActiveBomb[]>([]);
   const [blasts, setBlasts] = useState<ActiveBlast[]>([]);
+  const [powerUps, setPowerUps] = useState<ActivePowerUp[]>([]);
+  const [bombCapacity, setBombCapacity] = useState(initialBombCapacity);
+  const [blastRadius, setBlastRadius] = useState(initialBlastRadius);
+  const [collectedPowerUps, setCollectedPowerUps] = useState(0);
   const bombCellSetRef = useRef<Set<string>>(new Set());
   const bombTimerIdsRef = useRef<Map<number, number>>(new Map());
+  const bombsRef = useRef<ActiveBomb[]>([]);
+  const destructibleCellsRef = useRef(destructibleCells);
+  const powerUpsRef = useRef<ActivePowerUp[]>([]);
   const playerVisualPositionRef = useRef(cellPosition(playerStart.x, playerStart.z, 0.44));
   const playerCellRef = useRef(playerStart);
   const activePlayerMoveRef = useRef<ActivePlayerMove | null>(null);
   const playerMoveIdRef = useRef(0);
   const heldMoveCommandsRef = useRef<Map<string, MoveCommand>>(new Map());
   const bufferedMoveRef = useRef<{ command: MoveCommand; expiresAt: number } | null>(null);
+  const gameStartedAtRef = useRef(performance.now());
 
   useSceneRuntime(scene, arena);
 
@@ -98,11 +124,17 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
   useEffect(() => {
     bombCellSetRef.current = bombSet;
     bombSetRef.current = bombSet;
+    bombsRef.current = bombs;
   }, [bombSet]);
 
   useEffect(() => {
     destructibleSetRef.current = destructibleSet;
+    destructibleCellsRef.current = destructibleCells;
   }, [destructibleSet]);
+
+  useEffect(() => {
+    powerUpsRef.current = powerUps;
+  }, [powerUps]);
 
   useEffect(
     () => () => {
@@ -114,35 +146,105 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
     []
   );
 
-  const explodeBomb = useCallback(
-    (activeBomb: ActiveBomb) => {
-      setDestructibleCells(currentDestructibles => {
-        const currentSet = toCellSet(currentDestructibles);
-        const blastCells = computeBlastCells(activeBomb.cell, activeBomb.radius, wallSet, currentSet);
-        const destroyed = new Set(
-          blastCells.filter(cell => currentSet.has(cellKey(cell))).map(cell => cellKey(cell))
-        );
+  const emitHud = useCallback(() => {
+    onHudChange?.({
+      elapsedSeconds: Math.floor((performance.now() - gameStartedAtRef.current) / 1000),
+      availableBombs: Math.max(0, bombCapacity - bombs.length),
+      bombCapacity,
+      blastRadius,
+      collectedPowerUps
+    });
+  }, [blastRadius, bombCapacity, bombs.length, collectedPowerUps, onHudChange]);
 
-        setBlasts(currentBlasts => [
-          ...currentBlasts,
-          {
-            id: activeBomb.id,
-            cells: blastCells,
-            style: themeExplosionStyle(arena.theme)
+  useEffect(() => {
+    emitHud();
+    const timerId = window.setInterval(emitHud, 1000);
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [emitHud]);
+
+  const explodeBombCascade = useCallback(
+    (firstBomb: ActiveBomb) => {
+      const pendingBombs = [firstBomb];
+      const explodedIds = new Set<number>();
+      let nextBombs = bombsRef.current;
+      let nextDestructibles = destructibleCellsRef.current;
+      let nextPowerUps = powerUpsRef.current;
+      const nextBlasts: ActiveBlast[] = [];
+
+      while (pendingBombs.length > 0) {
+        const activeBomb = pendingBombs.shift();
+        if (!activeBomb || explodedIds.has(activeBomb.id)) {
+          continue;
+        }
+
+        const stillActive = nextBombs.some(currentBomb => currentBomb.id === activeBomb.id);
+        if (!stillActive) {
+          continue;
+        }
+
+        explodedIds.add(activeBomb.id);
+        const timerId = bombTimerIdsRef.current.get(activeBomb.id);
+        if (timerId !== undefined) {
+          window.clearTimeout(timerId);
+          bombTimerIdsRef.current.delete(activeBomb.id);
+        }
+
+        nextBombs = nextBombs.filter(currentBomb => currentBomb.id !== activeBomb.id);
+        const currentDestructibleSet = toCellSet(nextDestructibles);
+        const blastCells = computeBlastCells(activeBomb.cell, activeBomb.radius, wallSet, currentDestructibleSet);
+        const blastCellKeys = new Set(blastCells.map(cellKey));
+        const destroyedCrates = nextDestructibles.filter(cell => blastCellKeys.has(cellKey(cell)));
+
+        nextDestructibles = nextDestructibles.filter(cell => !blastCellKeys.has(cellKey(cell)));
+        nextPowerUps = [
+          ...nextPowerUps.filter(powerUp => !blastCellKeys.has(cellKey(powerUp.cell))),
+          ...destroyedCrates.flatMap(cell => {
+            const drop = powerUpDropForCell(cell);
+            return drop ? [{ id: `powerup-${cell.x}-${cell.z}`, cell, type: drop }] : [];
+          })
+        ];
+
+        nextBlasts.push({
+          id: activeBomb.id,
+          cells: blastCells,
+          style: themeExplosionStyle(arena.theme)
+        });
+
+        for (const chainedBomb of nextBombs) {
+          if (blastCellKeys.has(cellKey(chainedBomb.cell))) {
+            pendingBombs.push(chainedBomb);
           }
-        ]);
+        }
+      }
 
+      bombsRef.current = nextBombs;
+      destructibleCellsRef.current = nextDestructibles;
+      powerUpsRef.current = nextPowerUps;
+      bombCellSetRef.current = toCellSet(nextBombs.map(activeBomb => activeBomb.cell));
+      bombSetRef.current = bombCellSetRef.current;
+      destructibleSetRef.current = toCellSet(nextDestructibles);
+
+      setBombs(nextBombs);
+      setDestructibleCells(nextDestructibles);
+      setPowerUps(nextPowerUps);
+      setBlasts(currentBlasts => [...currentBlasts, ...nextBlasts]);
+
+      for (const blast of nextBlasts) {
         window.setTimeout(() => {
-          setBlasts(currentBlasts => currentBlasts.filter(blast => blast.id !== activeBomb.id));
+          setBlasts(currentBlasts => currentBlasts.filter(currentBlast => currentBlast.id !== blast.id));
         }, 1500);
-
-        return currentDestructibles.filter(cell => !destroyed.has(cellKey(cell)));
-      });
+      }
     },
     [arena.theme, wallSet]
   );
 
   const placeBomb = useCallback(() => {
+    if (bombsRef.current.length >= bombCapacity) {
+      return;
+    }
+
     const currentPlayerCell = nearestCellFromPosition(playerVisualPositionRef.current);
     const bombCellKey = cellKey(currentPlayerCell);
     if (bombCellSetRef.current.has(bombCellKey)) {
@@ -150,25 +252,25 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
     }
 
     bombCellSetRef.current = new Set([...bombCellSetRef.current, bombCellKey]);
+    bombSetRef.current = bombCellSetRef.current;
 
     const activeBomb: ActiveBomb = {
       id: Date.now(),
       cell: currentPlayerCell,
       explodeAt: performance.now() + bombFuseMs,
-      radius: defaultBombRadius
+      radius: blastRadius
     };
 
-    setBombs(currentBombs => [...currentBombs, activeBomb]);
+    const nextBombs = [...bombsRef.current, activeBomb];
+    bombsRef.current = nextBombs;
+    setBombs(nextBombs);
 
     const timerId = window.setTimeout(() => {
-      setBombs(currentBombs => currentBombs.filter(currentBomb => currentBomb.id !== activeBomb.id));
-      bombTimerIdsRef.current.delete(activeBomb.id);
-      bombCellSetRef.current.delete(bombCellKey);
-      explodeBomb(activeBomb);
+      explodeBombCascade(activeBomb);
     }, bombFuseMs);
 
     bombTimerIdsRef.current.set(activeBomb.id, timerId);
-  }, [explodeBomb]);
+  }, [blastRadius, bombCapacity, explodeBombCascade]);
 
   const startPlayerMoveFromCell = useCallback(
     (from: Cell, direction: Cell) => {
@@ -189,6 +291,24 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
     },
     [wallSet]
   );
+
+  const collectPowerUpAtCell = useCallback((cell: Cell) => {
+    const collectedPowerUp = powerUpsRef.current.find(powerUp => sameCell(powerUp.cell, cell));
+    if (!collectedPowerUp) {
+      return;
+    }
+
+    const nextPowerUps = powerUpsRef.current.filter(powerUp => powerUp.id !== collectedPowerUp.id);
+    powerUpsRef.current = nextPowerUps;
+    setPowerUps(nextPowerUps);
+    setCollectedPowerUps(currentCount => currentCount + 1);
+
+    if (collectedPowerUp.type === "bomb_capacity") {
+      setBombCapacity(currentCapacity => currentCapacity + 1);
+    } else {
+      setBlastRadius(currentRadius => currentRadius + 1);
+    }
+  }, []);
 
   const tryStartRequestedMoveFromCell = useCallback(
     (from: Cell) => {
@@ -232,12 +352,13 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
       playerCellRef.current = move.to;
       activePlayerMoveRef.current = null;
       setPlayerCell(move.to);
+      collectPowerUpAtCell(move.to);
 
       if (!tryStartRequestedMoveFromCell(move.to)) {
         setActivePlayerMove(null);
       }
     },
-    [tryStartRequestedMoveFromCell]
+    [collectPowerUpAtCell, tryStartRequestedMoveFromCell]
   );
 
   useEffect(() => {
@@ -440,6 +561,10 @@ export function ArenaContent({ arena, viewMode }: ArenaContentProps) {
             specularColor={Color3.FromHexString(bombMaterial.specular)}
           />
         </sphere>
+      ))}
+
+      {powerUps.map(powerUp => (
+        <PowerUpToken key={powerUp.id} powerUp={powerUp} isTopDown={isTopDown} />
       ))}
 
       <Player
@@ -731,6 +856,30 @@ function ParticleMotes({ arena }: { arena: ArenaState }) {
   );
 }
 
+function PowerUpToken({ powerUp, isTopDown }: { powerUp: ActivePowerUp; isTopDown: boolean; key?: string }) {
+  const isBombCapacity = powerUp.type === "bomb_capacity";
+  const color = isBombCapacity ? "#22D3EE" : "#F59E0B";
+
+  return (
+    <cylinder
+      name={`powerup-${powerUp.type}-${powerUp.cell.x}-${powerUp.cell.z}`}
+      position={cellPosition(powerUp.cell.x, powerUp.cell.z, 0.18)}
+      options={{
+        height: isTopDown ? 0.18 : 0.22,
+        diameter: isBombCapacity ? 0.46 : 0.52,
+        tessellation: isBombCapacity ? 6 : 24
+      }}
+    >
+      <standardMaterial
+        name={`powerup-material-${powerUp.type}-${powerUp.cell.x}-${powerUp.cell.z}`}
+        diffuseColor={Color3.FromHexString(color)}
+        emissiveColor={Color3.FromHexString(isTopDown ? "#000000" : color)}
+        specularColor={Color3.FromHexString(isTopDown ? "#000000" : "#FFFFFF")}
+      />
+    </cylinder>
+  );
+}
+
 function DirectedExplosion({
   cue,
   wallSet,
@@ -744,7 +893,7 @@ function DirectedExplosion({
     <BlastCells
       blast={{
         id: cue.id,
-        cells: computeBlastCells({ x: cue.cell[0], z: cue.cell[1] }, defaultBombRadius, wallSet, destructibleSet),
+        cells: computeBlastCells({ x: cue.cell[0], z: cue.cell[1] }, directedExplosionRadius, wallSet, destructibleSet),
         style: cue.style
       }}
     />
@@ -1072,6 +1221,19 @@ function crateVisualVariant(cell: Cell) {
     heightOffset: Math.sin(seed) * 0.02,
     rotationY: (seed % 4) * 0.08
   };
+}
+
+function powerUpDropForCell(cell: Cell): PowerUpType | null {
+  const seed = Math.abs(cell.x * 11 + cell.z * 5 + cell.x * cell.x + cell.z * cell.z) % 18;
+  if (seed <= 1) {
+    return "bomb_capacity";
+  }
+
+  if (seed <= 3) {
+    return "blast_radius";
+  }
+
+  return null;
 }
 
 function snapToGrid(vector: Vector3): Cell {
