@@ -7,7 +7,7 @@
   "properties": {
     "theme": {
       "type": "string",
-      "enum": ["classic", "space_base", "ice_dungeon", "volcano_arena", "cyberpunk_city", "dark_corruption"]
+      "enum": ["classic", "space_base", "ice_dungeon", "volcano_arena", "cyberpunk_city", "dark_corruption", "toy_world"]
     },
     "mood": {
       "type": "string"
@@ -76,7 +76,7 @@
           },
           "preset": {
             "type": ["string", "null"],
-            "enum": ["neutral", "emergency_neon", "frozen_blue", "volcano_glow", "cyberpunk_magenta", "dark_ritual", null]
+            "enum": ["neutral", "emergency_neon", "frozen_blue", "volcano_glow", "cyberpunk_magenta", "dark_ritual", "playroom_warm", null]
           },
           "asset": {
             "type": ["string", "null"],
@@ -87,34 +87,38 @@
               "lava_plate",
               "neon_asphalt",
               "corrupted_stone",
+              "foam_tiles",
               "classic_wall",
               "sci_fi_panels",
               "frozen_wall",
               "basalt_wall",
               "neon_wall",
               "shadow_obelisk",
+              "toy_blocks",
               "wood_crate",
               "energy_crate",
               "ice_crate",
               "magma_crate",
               "arcade_crate",
               "void_crate",
+              "gift_box",
               "classic_bomb",
               "plasma_core",
               "freeze_charge",
               "magma_bomb",
               "neon_pulse",
               "dark_orb",
+              "windup_bomb",
               null
             ]
           },
           "effect": {
             "type": ["string", "null"],
-            "enum": ["blue_energy_dust", "steam_puffs", "snow_sparks", "ember_rain", "hologram_grid", "purple_fog", null]
+            "enum": ["blue_energy_dust", "steam_puffs", "snow_sparks", "ember_rain", "hologram_grid", "purple_fog", "confetti_sparks", null]
           },
           "style": {
             "type": ["string", "null"],
-            "enum": ["classic_cross", "energy_cross", "ice_cross", "lava_cross", "neon_cross", "void_cross", null]
+            "enum": ["classic_cross", "energy_cross", "ice_cross", "lava_cross", "neon_cross", "void_cross", "pop_cross", null]
           },
           "cell": {
             "anyOf": [

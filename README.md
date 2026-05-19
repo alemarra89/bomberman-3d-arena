@@ -6,12 +6,14 @@ Prototype arcade in React + Babylon.js inspired by the core Bomberman loop, with
 
 The game currently supports:
 
-- grid-based player movement with smooth visual interpolation, held-key movement and turn buffering;
+- grid-based player movement with smooth visual interpolation, stable held-key priority and turn buffering;
 - bomb placement, timed explosions, destructible crates and bomb chain reactions;
 - power-ups for bomb capacity, blast radius, speed, bomb kick and bomb throw;
 - enemy encounters, player death, win/loss states and restart flow;
 - a gameplay HUD with timer, bombs, blast radius, enemies remaining and unlocked abilities;
-- a simplified high-readability 2D presentation and a free-orbit 3D camera.
+- pre-explosion bomb warning pulses plus pickup / enemy-defeat feedback;
+- prompt-driven arena themes — including space base, volcano, cyberpunk, ice, dark ritual and Toy — that change presentation without changing gameplay rules;
+- a dedicated high-readability 2D presentation with its own sprite/tile language, plus free-orbit 3D and FPS cameras.
 
 ## Controls
 
@@ -34,6 +36,7 @@ Useful checks:
 ```bash
 npm run typecheck
 npm run build
+npm run test:e2e
 ```
 
 ## Development notes

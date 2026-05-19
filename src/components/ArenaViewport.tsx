@@ -3,7 +3,7 @@ import type { Scene as BabylonScene } from "@babylonjs/core/scene";
 import { useState } from "react";
 import { Engine } from "reactylon/web";
 import { Scene } from "reactylon";
-import type { ArenaState, ViewMode } from "../types";
+import type { ArenaState, ViewMode, VisualStyle } from "../types";
 import { ArenaContent, type ArenaHudState } from "./ArenaContent";
 
 interface ArenaViewportProps {
@@ -11,6 +11,8 @@ interface ArenaViewportProps {
   isApplying: boolean;
   viewMode: ViewMode;
 }
+
+const baseVisualStyle: VisualStyle = "arcade_premium";
 
 export function ArenaViewport({ arena, isApplying, viewMode }: ArenaViewportProps) {
   const [sessionId, setSessionId] = useState(0);
@@ -20,7 +22,7 @@ export function ArenaViewport({ arena, isApplying, viewMode }: ArenaViewportProp
     bombCapacity: 1,
     blastRadius: 1,
     collectedPowerUps: 0,
-    enemiesRemaining: 6,
+    enemiesRemaining: 5,
     speedLevel: 0,
     canKickBombs: false,
     canThrowBombs: false,
@@ -34,7 +36,7 @@ export function ArenaViewport({ arena, isApplying, viewMode }: ArenaViewportProp
       bombCapacity: 1,
       blastRadius: 1,
       collectedPowerUps: 0,
-      enemiesRemaining: 6,
+      enemiesRemaining: 5,
       speedLevel: 0,
       canKickBombs: false,
       canThrowBombs: false,
@@ -44,10 +46,10 @@ export function ArenaViewport({ arena, isApplying, viewMode }: ArenaViewportProp
   };
 
   return (
-    <section className="arena-stage">
+    <section className={`arena-stage ${viewMode === "top_down" ? "top-down" : ""}`}>
       <Engine canvasId="reactylon-canvas" forceWebGL engineOptions={{ antialias: true, adaptToDeviceRatio: true }}>
         <Scene onSceneReady={scene => prepareScene(scene, arena)}>
-          <ArenaContent key={sessionId} arena={arena} viewMode={viewMode} onHudChange={setHud} />
+          <ArenaContent key={sessionId} arena={arena} viewMode={viewMode} visualStyle={baseVisualStyle} onHudChange={setHud} />
         </Scene>
       </Engine>
       <ArenaHud hud={hud} />
@@ -61,38 +63,38 @@ export function ArenaViewport({ arena, isApplying, viewMode }: ArenaViewportProp
 
 function ArenaHud({ hud }: { hud: ArenaHudState }) {
   return (
-    <div className="arena-hud" aria-label="HUD partita">
-      <div>
+    <div className="arena-hud" aria-label="HUD partita" data-testid="arena-hud">
+      <div data-testid="hud-time">
         <span>Tempo</span>
         <strong>{formatElapsedTime(hud.elapsedSeconds)}</strong>
       </div>
-      <div>
+      <div data-testid="hud-bombs">
         <span>Bombe</span>
         <strong>
           {hud.availableBombs}/{hud.bombCapacity}
         </strong>
       </div>
-      <div>
+      <div data-testid="hud-radius">
         <span>Raggio</span>
         <strong>{hud.blastRadius}</strong>
       </div>
-      <div>
+      <div data-testid="hud-powerups">
         <span>Power-up</span>
         <strong>{hud.collectedPowerUps}</strong>
       </div>
-      <div>
+      <div data-testid="hud-enemies">
         <span>Nemici</span>
         <strong>{hud.enemiesRemaining}</strong>
       </div>
-      <div>
+      <div data-testid="hud-speed">
         <span>Velocità</span>
         <strong>{hud.speedLevel}</strong>
       </div>
-      <div>
+      <div data-testid="hud-kick">
         <span>Kick</span>
         <strong>{hud.canKickBombs ? "Sì" : "No"}</strong>
       </div>
-      <div>
+      <div data-testid="hud-throw">
         <span>Lancio</span>
         <strong>{hud.canThrowBombs ? "Sì" : "No"}</strong>
       </div>
@@ -123,6 +125,7 @@ function formatElapsedTime(totalSeconds: number) {
 function prepareScene(scene: BabylonScene, arena: ArenaState) {
   scene.clearColor = Color4.FromHexString(`${arena.palette.primary}FF`);
   scene.ambientColor = Color3.FromHexString(arena.palette.secondary);
-  scene.getEngine().setHardwareScalingLevel(Math.max(1, window.devicePixelRatio / 1.5));
+  const targetPixelRatio = Math.min(window.devicePixelRatio || 1, 1.75);
+  scene.getEngine().setHardwareScalingLevel(1 / targetPixelRatio);
   scene.animationTimeScale = 1;
 }

@@ -67,13 +67,14 @@ export function PromptPanel({ director, viewMode, setViewMode }: PromptPanelProp
       <div className="gameplay-actions">
         <button
           type="button"
+          data-testid="place-bomb-button"
           onClick={() => {
             window.dispatchEvent(new CustomEvent("arena:place-bomb"));
           }}
         >
           Piazza bomba
         </button>
-        <span>WASD / frecce muovi | Spazio o B bomba | T lancia bomba con guanto</span>
+        <span>WASD / frecce o controller muovi | A bomba | Y lancia | stick destro camera | LT/RT zoom</span>
       </div>
 
       <div className="view-mode-switch" role="tablist" aria-label="Modalita vista">
@@ -81,6 +82,7 @@ export function PromptPanel({ director, viewMode, setViewMode }: PromptPanelProp
           <button
             key={mode.value}
             type="button"
+            data-testid={`view-mode-${mode.value}`}
             role="tab"
             aria-selected={viewMode === mode.value}
             className={viewMode === mode.value ? "active" : ""}

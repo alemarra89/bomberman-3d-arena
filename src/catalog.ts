@@ -102,6 +102,18 @@ export const themeDefaults: Record<Theme, ThemeDefaults> = {
     fog: true,
     particles: ["purple_fog"],
     explosion: "void_cross"
+  },
+  toy_world: {
+    mood: "playful toy workshop",
+    palette: { primary: "#6DBD72", secondary: "#FDE68A", accent: "#FB7185" },
+    floor: "foam_tiles",
+    walls: "toy_blocks",
+    crates: "gift_box",
+    bomb: "windup_bomb",
+    lighting: "playroom_warm",
+    fog: false,
+    particles: ["confetti_sparks"],
+    explosion: "pop_cross"
   }
 };
 
@@ -111,7 +123,8 @@ export const floorLooks: Record<FloorAsset, MaterialLook> = {
   ice_slab: { diffuse: "#78C8E8", emissive: "#0B4C6B", specular: "#E0F2FE", alpha: 0.92 },
   lava_plate: { diffuse: "#321008", emissive: "#6B2105", specular: "#FDBA74" },
   neon_asphalt: { diffuse: "#111827", emissive: "#07151A", specular: "#5EEAD4" },
-  corrupted_stone: { diffuse: "#18111E", emissive: "#220A35", specular: "#C084FC" }
+  corrupted_stone: { diffuse: "#18111E", emissive: "#220A35", specular: "#C084FC" },
+  foam_tiles: { diffuse: "#6DBD72", emissive: "#102311", specular: "#DCFCE7" }
 };
 
 export const wallLooks: Record<WallAsset, MaterialLook> = {
@@ -120,7 +133,8 @@ export const wallLooks: Record<WallAsset, MaterialLook> = {
   frozen_wall: { diffuse: "#A7F3FF", emissive: "#0E7490", specular: "#ECFEFF", alpha: 0.95 },
   basalt_wall: { diffuse: "#30241F", emissive: "#471103", specular: "#FB923C" },
   neon_wall: { diffuse: "#151522", emissive: "#34134B", specular: "#F0ABFC" },
-  shadow_obelisk: { diffuse: "#100B14", emissive: "#3B0764", specular: "#E879F9" }
+  shadow_obelisk: { diffuse: "#100B14", emissive: "#3B0764", specular: "#E879F9" },
+  toy_blocks: { diffuse: "#F7D08A", emissive: "#241506", specular: "#FFF7ED" }
 };
 
 export const crateLooks: Record<CrateAsset, MaterialLook> = {
@@ -129,7 +143,8 @@ export const crateLooks: Record<CrateAsset, MaterialLook> = {
   ice_crate: { diffuse: "#BAE6FD", emissive: "#155E75", specular: "#FFFFFF", alpha: 0.9 },
   magma_crate: { diffuse: "#5B1C08", emissive: "#B45309", specular: "#FED7AA" },
   arcade_crate: { diffuse: "#1E1B4B", emissive: "#7E22CE", specular: "#F9A8D4" },
-  void_crate: { diffuse: "#0B0710", emissive: "#581C87", specular: "#22D3EE" }
+  void_crate: { diffuse: "#0B0710", emissive: "#581C87", specular: "#22D3EE" },
+  gift_box: { diffuse: "#F59E0B", emissive: "#3A1802", specular: "#FDE68A" }
 };
 
 export const bombLooks: Record<BombAsset, MaterialLook> = {
@@ -138,7 +153,8 @@ export const bombLooks: Record<BombAsset, MaterialLook> = {
   freeze_charge: { diffuse: "#E0F2FE", emissive: "#0EA5E9", specular: "#FFFFFF" },
   magma_bomb: { diffuse: "#1C0A05", emissive: "#EA580C", specular: "#FDE68A" },
   neon_pulse: { diffuse: "#18181B", emissive: "#DB2777", specular: "#F0FDFA" },
-  dark_orb: { diffuse: "#030207", emissive: "#9333EA", specular: "#67E8F9" }
+  dark_orb: { diffuse: "#030207", emissive: "#9333EA", specular: "#67E8F9" },
+  windup_bomb: { diffuse: "#334155", emissive: "#7C2D12", specular: "#FDE68A" }
 };
 
 export const lightingColors: Record<LightingPreset, { diffuse: string; ground: string; point: string }> = {
@@ -147,7 +163,8 @@ export const lightingColors: Record<LightingPreset, { diffuse: string; ground: s
   frozen_blue: { diffuse: "#DDF8FF", ground: "#083344", point: "#67E8F9" },
   volcano_glow: { diffuse: "#FED7AA", ground: "#220A05", point: "#FB923C" },
   cyberpunk_magenta: { diffuse: "#F0ABFC", ground: "#021A18", point: "#2DD4BF" },
-  dark_ritual: { diffuse: "#C084FC", ground: "#030207", point: "#22D3EE" }
+  dark_ritual: { diffuse: "#C084FC", ground: "#030207", point: "#22D3EE" },
+  playroom_warm: { diffuse: "#FFF7ED", ground: "#14532D", point: "#FB7185" }
 };
 
 export const effectColors: Record<EffectName, string> = {
@@ -156,7 +173,8 @@ export const effectColors: Record<EffectName, string> = {
   snow_sparks: "#E0F2FE",
   ember_rain: "#FB923C",
   hologram_grid: "#22D3EE",
-  purple_fog: "#A855F7"
+  purple_fog: "#A855F7",
+  confetti_sparks: "#FB7185"
 };
 
 export const explosionColors: Record<ExplosionStyle, string> = {
@@ -165,5 +183,6 @@ export const explosionColors: Record<ExplosionStyle, string> = {
   ice_cross: "#BAE6FD",
   lava_cross: "#FB923C",
   neon_cross: "#F472B6",
-  void_cross: "#A855F7"
+  void_cross: "#A855F7",
+  pop_cross: "#FDE68A"
 };

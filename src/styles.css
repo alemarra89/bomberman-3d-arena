@@ -57,11 +57,19 @@ textarea {
   mix-blend-mode: screen;
 }
 
+.arena-stage.top-down::before {
+  background: none;
+}
+
+.arena-stage.top-down::after {
+  background: none;
+  opacity: 0;
+}
+
 .arena-stage::after {
   background:
-    linear-gradient(rgba(103, 232, 249, 0.035) 50%, transparent 50%) 0 0 / 100% 5px,
-    radial-gradient(circle at center, transparent 48%, rgba(0, 0, 0, 0.34));
-  opacity: 0.56;
+    radial-gradient(circle at center, transparent 54%, rgba(0, 0, 0, 0.3));
+  opacity: 0.42;
 }
 
 #reactylon-canvas {
@@ -70,6 +78,7 @@ textarea {
   height: 100%;
   touch-action: none;
   outline: none;
+  image-rendering: auto;
 }
 
 .arena-hud {
@@ -173,7 +182,7 @@ textarea {
   display: flex;
   justify-content: center;
   pointer-events: none;
-  opacity: 0.72;
+  opacity: 0;
   transform: translateY(8px);
   transition:
     opacity 220ms ease,

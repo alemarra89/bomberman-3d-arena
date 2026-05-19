@@ -12,7 +12,8 @@ const examples = [
   "Crea un'arena vulcanica con lava e bombe incandescenti",
   "Rendila cyberpunk anni 80 con esplosioni al neon",
   "Portami in un dungeon di ghiaccio con bombe congelanti",
-  "Corrompi tutto con un rituale oscuro e particelle viola"
+  "Corrompi tutto con un rituale oscuro e particelle viola",
+  "Trasforma l'arena in un mondo di giocattoli con casse pastello e bombe a molla"
 ];
 
 export function useArenaDirector() {

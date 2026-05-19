@@ -4,7 +4,8 @@ export type Theme =
   | "ice_dungeon"
   | "volcano_arena"
   | "cyberpunk_city"
-  | "dark_corruption";
+  | "dark_corruption"
+  | "toy_world";
 
 export type LightingPreset =
   | "neutral"
@@ -12,7 +13,8 @@ export type LightingPreset =
   | "frozen_blue"
   | "volcano_glow"
   | "cyberpunk_magenta"
-  | "dark_ritual";
+  | "dark_ritual"
+  | "playroom_warm";
 
 export type FloorAsset =
   | "classic_floor"
@@ -20,7 +22,8 @@ export type FloorAsset =
   | "ice_slab"
   | "lava_plate"
   | "neon_asphalt"
-  | "corrupted_stone";
+  | "corrupted_stone"
+  | "foam_tiles";
 
 export type WallAsset =
   | "classic_wall"
@@ -28,7 +31,8 @@ export type WallAsset =
   | "frozen_wall"
   | "basalt_wall"
   | "neon_wall"
-  | "shadow_obelisk";
+  | "shadow_obelisk"
+  | "toy_blocks";
 
 export type CrateAsset =
   | "wood_crate"
@@ -36,7 +40,8 @@ export type CrateAsset =
   | "ice_crate"
   | "magma_crate"
   | "arcade_crate"
-  | "void_crate";
+  | "void_crate"
+  | "gift_box";
 
 export type BombAsset =
   | "classic_bomb"
@@ -44,7 +49,8 @@ export type BombAsset =
   | "freeze_charge"
   | "magma_bomb"
   | "neon_pulse"
-  | "dark_orb";
+  | "dark_orb"
+  | "windup_bomb";
 
 export type EffectName =
   | "blue_energy_dust"
@@ -52,7 +58,8 @@ export type EffectName =
   | "snow_sparks"
   | "ember_rain"
   | "hologram_grid"
-  | "purple_fog";
+  | "purple_fog"
+  | "confetti_sparks";
 
 export type ExplosionStyle =
   | "classic_cross"
@@ -60,9 +67,11 @@ export type ExplosionStyle =
   | "ice_cross"
   | "lava_cross"
   | "neon_cross"
-  | "void_cross";
+  | "void_cross"
+  | "pop_cross";
 
 export type ViewMode = "top_down" | "three_d" | "fps";
+export type VisualStyle = "arcade_premium" | "toy_like" | "neon_cinematic";
 
 export type DirectorActionType =
   | "show_overlay"

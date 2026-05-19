@@ -12,14 +12,14 @@ const port = Number(process.env.API_PORT ?? 8787);
 const planCache = new Map();
 
 const catalog = {
-  themes: ["classic", "space_base", "ice_dungeon", "volcano_arena", "cyberpunk_city", "dark_corruption"],
-  floorAssets: ["classic_floor", "space_metal_grid", "ice_slab", "lava_plate", "neon_asphalt", "corrupted_stone"],
-  wallAssets: ["classic_wall", "sci_fi_panels", "frozen_wall", "basalt_wall", "neon_wall", "shadow_obelisk"],
-  crateAssets: ["wood_crate", "energy_crate", "ice_crate", "magma_crate", "arcade_crate", "void_crate"],
-  bombAssets: ["classic_bomb", "plasma_core", "freeze_charge", "magma_bomb", "neon_pulse", "dark_orb"],
-  effects: ["blue_energy_dust", "steam_puffs", "snow_sparks", "ember_rain", "hologram_grid", "purple_fog"],
-  explosionStyles: ["classic_cross", "energy_cross", "ice_cross", "lava_cross", "neon_cross", "void_cross"],
-  lightingPresets: ["neutral", "emergency_neon", "frozen_blue", "volcano_glow", "cyberpunk_magenta", "dark_ritual"]
+  themes: ["classic", "space_base", "ice_dungeon", "volcano_arena", "cyberpunk_city", "dark_corruption", "toy_world"],
+  floorAssets: ["classic_floor", "space_metal_grid", "ice_slab", "lava_plate", "neon_asphalt", "corrupted_stone", "foam_tiles"],
+  wallAssets: ["classic_wall", "sci_fi_panels", "frozen_wall", "basalt_wall", "neon_wall", "shadow_obelisk", "toy_blocks"],
+  crateAssets: ["wood_crate", "energy_crate", "ice_crate", "magma_crate", "arcade_crate", "void_crate", "gift_box"],
+  bombAssets: ["classic_bomb", "plasma_core", "freeze_charge", "magma_bomb", "neon_pulse", "dark_orb", "windup_bomb"],
+  effects: ["blue_energy_dust", "steam_puffs", "snow_sparks", "ember_rain", "hologram_grid", "purple_fog", "confetti_sparks"],
+  explosionStyles: ["classic_cross", "energy_cross", "ice_cross", "lava_cross", "neon_cross", "void_cross", "pop_cross"],
+  lightingPresets: ["neutral", "emergency_neon", "frozen_blue", "volcano_glow", "cyberpunk_magenta", "dark_ritual", "playroom_warm"]
 };
 
 const systemPrompt = `You are the AI director of a 3D bomber-arena game.
@@ -264,6 +264,22 @@ function fallbackPlan(userPrompt) {
       particle: "purple_fog",
       explosion: "void_cross",
       overlay: "DARK CORRUPTION APPLIED"
+    });
+  }
+
+  if (normalized.includes("toy") || normalized.includes("giocattol") || normalized.includes("pastell") || normalized.includes("cameretta")) {
+    return makePlan({
+      theme: "toy_world",
+      mood: "mondo di giocattoli con blocchi morbidi, casse pastello e bombe a molla",
+      palette: { primary: "#6DBD72", secondary: "#FDE68A", accent: "#FB7185" },
+      floor: "foam_tiles",
+      walls: "toy_blocks",
+      crates: "gift_box",
+      bomb: "windup_bomb",
+      lighting: "playroom_warm",
+      particle: "confetti_sparks",
+      explosion: "pop_cross",
+      overlay: "TOY WORLD ASSEMBLED"
     });
   }
 
