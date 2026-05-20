@@ -13,13 +13,15 @@ import {
   type MaterialLook,
   wallLooks
 } from "../catalog";
-import type { ArenaState, ExplosionCue, ExplosionStyle, ViewMode, VisualStyle } from "../types";
+import type { ArenaState, ExplosionCue, ExplosionStyle, ViewMode, VisualStyle, WorldSkin } from "../types";
 
 interface ArenaContentProps {
   arena: ArenaState;
   viewMode: ViewMode;
+  worldSkin: WorldSkin;
   visualStyle: VisualStyle;
   onHudChange?: (hud: ArenaHudState) => void;
+  onRestart?: () => void;
   key?: number;
 }
 
@@ -30,8 +32,8 @@ interface Cell {
 
 type MoveCommand = "forward" | "backward" | "left" | "right";
 type ArenaElementKind = "floor" | "wall" | "crate" | "bomb";
-type PowerUpType = "bomb_capacity" | "blast_radius" | "speed_up" | "bomb_kick" | "throw_bomb";
-type GameStatus = "playing" | "won" | "lost";
+type PowerUpType = "bomb_capacity" | "blast_radius" | "speed_up" | "bomb_kick";
+type GameStatus = "playing" | "paused" | "won" | "lost";
 type EnemyType = "wanderer" | "chaser" | "ghost";
 
 export interface ArenaHudState {
@@ -43,7 +45,7 @@ export interface ArenaHudState {
   enemiesRemaining: number;
   speedLevel: number;
   canKickBombs: boolean;
-  canThrowBombs: boolean;
+  controllerName: string | null;
   status: GameStatus;
 }
 
@@ -137,8 +139,12 @@ const gamepadCameraSpeedFps = 2.15;
 const gamepadZoomDeadZone = 0.08;
 const gamepadZoomSpeed3D = 13;
 const gamepadZoomSpeedFps = 1.2;
+const enableGamepadInput = true;
+const enableCameraFollow = true;
+const enableEnemies = true;
+const enableHudClock = true;
 
-export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: ArenaContentProps) {
+export function ArenaContent({ arena, viewMode, worldSkin, visualStyle, onHudChange, onRestart }: ArenaContentProps) {
   const scene = useScene();
   const floor = floorLooks[arena.floor];
   const walls = wallLooks[arena.walls];
@@ -157,7 +163,7 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
   const floorCells = useMemo(() => createFloorCells(), []);
   const initialDestructibles = generatedLevel.destructibleCells;
   const initialDestructibleSet = useMemo(() => toCellSet(initialDestructibles), [initialDestructibles]);
-  const initialEnemies = generatedLevel.enemies;
+  const initialEnemies = enableEnemies ? generatedLevel.enemies : [];
 
   const [destructibleCells, setDestructibleCells] = useState<Cell[]>(initialDestructibles);
   const [bombs, setBombs] = useState<ActiveBomb[]>([]);
@@ -169,8 +175,8 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
   const [collectedPowerUps, setCollectedPowerUps] = useState(0);
   const [speedLevel, setSpeedLevel] = useState(0);
   const [canKickBombs, setCanKickBombs] = useState(false);
-  const [canThrowBombs, setCanThrowBombs] = useState(false);
   const [gameStatus, setGameStatus] = useState<GameStatus>("playing");
+  const [controllerName, setControllerName] = useState<string | null>(null);
   const [feedbackCues, setFeedbackCues] = useState<FeedbackCue[]>([]);
   const bombCellSetRef = useRef<Set<string>>(new Set());
   const playerPassableBombCellKeysRef = useRef<Set<string>>(new Set());
@@ -187,9 +193,12 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
   const heldMoveCommandsRef = useRef<Map<string, MoveCommand>>(new Map());
   const bufferedMoveRef = useRef<{ command: MoveCommand; expiresAt: number } | null>(null);
   const gamepadMoveCommandRef = useRef<MoveCommand | null>(null);
-  const gamepadButtonStateRef = useRef({ placeBomb: false, throwBomb: false });
+  const gamepadButtonStateRef = useRef({ placeBomb: false, menu: false });
+  const controllerNameRef = useRef<string | null>(null);
   const gameStartedAtRef = useRef(performance.now());
   const gameEndedAtRef = useRef<number | null>(null);
+  const pauseStartedAtRef = useRef<number | null>(null);
+  const pausedDurationMsRef = useRef(0);
   const gameStatusRef = useRef<GameStatus>("playing");
   const lastPlayerDirectionRef = useRef<Cell>({ x: 0, z: -1 });
   const playerMoveDurationMs = Math.max(minimumPlayerMoveDurationMs, basePlayerMoveDurationMs - speedLevel * speedUpStepMs);
@@ -243,8 +252,9 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
   );
 
   const emitHud = useCallback(() => {
+    const clockAt = gameEndedAtRef.current ?? pauseStartedAtRef.current ?? performance.now();
     onHudChange?.({
-      elapsedSeconds: Math.floor(((gameEndedAtRef.current ?? performance.now()) - gameStartedAtRef.current) / 1000),
+      elapsedSeconds: Math.floor(Math.max(0, clockAt - gameStartedAtRef.current - pausedDurationMsRef.current) / 1000),
       availableBombs: Math.max(0, bombCapacity - bombs.length),
       bombCapacity,
       blastRadius,
@@ -252,7 +262,7 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
       enemiesRemaining: enemies.length,
       speedLevel,
       canKickBombs,
-      canThrowBombs,
+      controllerName,
       status: gameStatus
     });
   }, [
@@ -260,8 +270,8 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
     bombCapacity,
     bombs.length,
     canKickBombs,
-    canThrowBombs,
     collectedPowerUps,
+    controllerName,
     enemies.length,
     gameStatus,
     onHudChange,
@@ -270,13 +280,17 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
 
   useEffect(() => {
     emitHud();
+    if (!enableHudClock) {
+      return;
+    }
+
     const timerId = window.setInterval(emitHud, 1000);
     return () => {
       window.clearInterval(timerId);
     };
   }, [emitHud]);
 
-  const finishGame = useCallback((status: Exclude<GameStatus, "playing">) => {
+  const finishGame = useCallback((status: "won" | "lost") => {
     if (gameStatusRef.current !== "playing") {
       return;
     }
@@ -285,7 +299,7 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
     gameEndedAtRef.current = performance.now();
     heldMoveCommandsRef.current.clear();
     gamepadMoveCommandRef.current = null;
-    gamepadButtonStateRef.current = { placeBomb: false, throwBomb: false };
+    gamepadButtonStateRef.current = { placeBomb: false, menu: false };
     playerPassableBombCellKeysRef.current.clear();
     bufferedMoveRef.current = null;
     playerDirectionRef.current = null;
@@ -399,6 +413,75 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
     [arena.theme, finishGame, wallSet]
   );
 
+  const scheduleBombExplosion = useCallback(
+    (activeBomb: ActiveBomb) => {
+      const existingTimerId = bombTimerIdsRef.current.get(activeBomb.id);
+      if (existingTimerId !== undefined) {
+        window.clearTimeout(existingTimerId);
+      }
+
+      const delayMs = Math.max(0, activeBomb.explodeAt - performance.now());
+      const timerId = window.setTimeout(() => {
+        explodeBombCascade(activeBomb);
+      }, delayMs);
+      bombTimerIdsRef.current.set(activeBomb.id, timerId);
+    },
+    [explodeBombCascade]
+  );
+
+  const clearPlayerIntent = useCallback(() => {
+    heldMoveCommandsRef.current.clear();
+    bufferedMoveRef.current = null;
+    gamepadMoveCommandRef.current = null;
+    playerDirectionRef.current = null;
+  }, []);
+
+  const pauseGame = useCallback(() => {
+    if (gameStatusRef.current !== "playing") {
+      return;
+    }
+
+    pauseStartedAtRef.current = performance.now();
+    for (const timerId of bombTimerIdsRef.current.values()) {
+      window.clearTimeout(timerId);
+    }
+    bombTimerIdsRef.current.clear();
+    clearPlayerIntent();
+    gameStatusRef.current = "paused";
+    setGameStatus("paused");
+  }, [clearPlayerIntent]);
+
+  const resumeGame = useCallback(() => {
+    if (gameStatusRef.current !== "paused") {
+      return;
+    }
+
+    const now = performance.now();
+    const pauseStartedAt = pauseStartedAtRef.current ?? now;
+    const pausedDurationMs = now - pauseStartedAt;
+    pausedDurationMsRef.current += pausedDurationMs;
+    pauseStartedAtRef.current = null;
+
+    const shiftedBombs = bombsRef.current.map(activeBomb => ({
+      ...activeBomb,
+      explodeAt: activeBomb.explodeAt + pausedDurationMs
+    }));
+    bombsRef.current = shiftedBombs;
+    setBombs(shiftedBombs);
+    shiftedBombs.forEach(scheduleBombExplosion);
+
+    const shiftedEnemies = enemiesRef.current.map(enemy => ({
+      ...enemy,
+      nextMoveAt: enemy.nextMoveAt + pausedDurationMs,
+      visualMoveStartedAt: enemy.visualMoveStartedAt + pausedDurationMs
+    }));
+    enemiesRef.current = shiftedEnemies;
+    setEnemies(shiftedEnemies);
+
+    gameStatusRef.current = "playing";
+    setGameStatus("playing");
+  }, [scheduleBombExplosion]);
+
   const placeBomb = useCallback(() => {
     if (gameStatusRef.current !== "playing") {
       return;
@@ -428,12 +511,8 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
     bombsRef.current = nextBombs;
     setBombs(nextBombs);
 
-    const timerId = window.setTimeout(() => {
-      explodeBombCascade(activeBomb);
-    }, bombFuseMs);
-
-    bombTimerIdsRef.current.set(activeBomb.id, timerId);
-  }, [bombCapacity, explodeBombCascade]);
+    scheduleBombExplosion(activeBomb);
+  }, [bombCapacity, scheduleBombExplosion]);
 
   const relocateBomb = useCallback(
     (bombToMove: ActiveBomb, destination: Cell) => {
@@ -480,31 +559,6 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
     [relocateBomb, wallSet]
   );
 
-  const throwBomb = useCallback(() => {
-    if (gameStatusRef.current !== "playing" || !canThrowBombs) {
-      return;
-    }
-
-    const playerCurrentCell = nearestCellFromPosition(playerVisualPositionRef.current);
-    const bombToThrow = bombsRef.current.find(activeBomb => sameCell(activeBomb.cell, playerCurrentCell));
-    if (!bombToThrow) {
-      return;
-    }
-
-    const destination = findThrownBombLandingCell(
-      playerCurrentCell,
-      lastPlayerDirectionRef.current,
-      wallSet,
-      destructibleSetRef.current,
-      bombCellSetRef.current
-    );
-    if (!destination) {
-      return;
-    }
-
-    relocateBomb(bombToThrow, destination);
-  }, [canThrowBombs, relocateBomb, wallSet]);
-
   const collectPowerUpAtCell = useCallback((cell: Cell) => {
     const collectedPowerUp = powerUpsRef.current.find(powerUp => sameCell(powerUp.cell, cell));
     if (!collectedPowerUp) {
@@ -530,9 +584,6 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
         break;
       case "bomb_kick":
         setCanKickBombs(true);
-        break;
-      case "throw_bomb":
-        setCanThrowBombs(true);
         break;
     }
   }, []);
@@ -715,17 +766,7 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
 
     canvas?.addEventListener("pointerdown", focusCanvas);
 
-    const clearHeldMovement = () => {
-      heldMoveCommandsRef.current.clear();
-      bufferedMoveRef.current = null;
-      playerDirectionRef.current = null;
-    };
-
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (gameStatusRef.current !== "playing") {
-        return;
-      }
-
       const target = event.target as HTMLElement | null;
       const isTypingTarget =
         target?.tagName === "TEXTAREA" || target?.tagName === "INPUT" || target?.isContentEditable === true;
@@ -734,6 +775,28 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
       }
 
       const key = event.key.toLowerCase();
+      if ((key === "escape" || key === "p") && !event.repeat) {
+        event.preventDefault();
+        if (gameStatusRef.current === "playing") {
+          pauseGame();
+        } else if (gameStatusRef.current === "paused") {
+          resumeGame();
+        }
+        return;
+      }
+
+      if (gameStatusRef.current === "paused") {
+        if (key === "r" && !event.repeat) {
+          event.preventDefault();
+          onRestart?.();
+        }
+        return;
+      }
+
+      if (gameStatusRef.current !== "playing") {
+        return;
+      }
+
       const moveCommand = moveCommandForKey(key);
       if (moveCommand) {
         event.preventDefault();
@@ -747,9 +810,6 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
       } else if ((key === " " || key === "b") && !event.repeat) {
         event.preventDefault();
         placeBomb();
-      } else if (key === "t" && !event.repeat) {
-        event.preventDefault();
-        throwBomb();
       }
     };
 
@@ -773,19 +833,40 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     window.addEventListener("keyup", handleKeyUp, { capture: true });
-    window.addEventListener("blur", clearHeldMovement);
+    window.addEventListener("blur", clearPlayerIntent);
     window.addEventListener("arena:place-bomb", handlePlaceBombEvent);
     return () => {
       window.removeEventListener("keydown", handleKeyDown, { capture: true });
       window.removeEventListener("keyup", handleKeyUp, { capture: true });
-      window.removeEventListener("blur", clearHeldMovement);
+      window.removeEventListener("blur", clearPlayerIntent);
       window.removeEventListener("arena:place-bomb", handlePlaceBombEvent);
       canvas?.removeEventListener("pointerdown", focusCanvas);
-      clearHeldMovement();
+      clearPlayerIntent();
     };
-  }, [placeBomb, throwBomb]);
+  }, [clearPlayerIntent, onRestart, pauseGame, placeBomb, resumeGame]);
 
   useEffect(() => {
+    const handleResumeGame = () => {
+      resumeGame();
+    };
+
+    const handlePauseGame = () => {
+      pauseGame();
+    };
+
+    window.addEventListener("arena:resume-game", handleResumeGame);
+    window.addEventListener("arena:pause-game", handlePauseGame);
+    return () => {
+      window.removeEventListener("arena:resume-game", handleResumeGame);
+      window.removeEventListener("arena:pause-game", handlePauseGame);
+    };
+  }, [pauseGame, resumeGame]);
+
+  useEffect(() => {
+    if (!enableGamepadInput) {
+      return;
+    }
+
     let previousFrameAt = performance.now();
 
     const clearGamepadMovement = () => {
@@ -802,19 +883,48 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
       previousFrameAt = now;
 
       const gamepad = firstConnectedGamepad();
+      const nextControllerName = gamepad ? formatControllerName(gamepad.id) : null;
+      if (nextControllerName !== controllerNameRef.current) {
+        controllerNameRef.current = nextControllerName;
+        setControllerName(nextControllerName);
+      }
+
       if (!gamepad) {
         clearGamepadMovement();
-        gamepadButtonStateRef.current = { placeBomb: false, throwBomb: false };
+        gamepadButtonStateRef.current = { placeBomb: false, menu: false };
         return;
       }
 
       applyGamepadCamera(scene, viewMode, gamepad, elapsedSeconds);
+      const placeBombPressed = gamepadButtonPressed(gamepad, 0);
+      const menuPressed = gamepadButtonPressed(gamepad, 9);
+
+      if (gameStatusRef.current === "paused") {
+        clearGamepadMovement();
+        if ((menuPressed && !gamepadButtonStateRef.current.menu) || (placeBombPressed && !gamepadButtonStateRef.current.placeBomb)) {
+          resumeGame();
+        }
+        gamepadButtonStateRef.current = {
+          placeBomb: placeBombPressed,
+          menu: menuPressed
+        };
+        return;
+      }
 
       if (gameStatusRef.current !== "playing") {
         clearGamepadMovement();
         gamepadButtonStateRef.current = {
-          placeBomb: gamepadButtonPressed(gamepad, 0),
-          throwBomb: gamepadButtonPressed(gamepad, 3)
+          placeBomb: placeBombPressed,
+          menu: menuPressed
+        };
+        return;
+      }
+
+      if (menuPressed && !gamepadButtonStateRef.current.menu) {
+        pauseGame();
+        gamepadButtonStateRef.current = {
+          placeBomb: placeBombPressed,
+          menu: menuPressed
         };
         return;
       }
@@ -835,27 +945,22 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
         }
       }
 
-      const placeBombPressed = gamepadButtonPressed(gamepad, 0);
-      const throwBombPressed = gamepadButtonPressed(gamepad, 3);
       if (placeBombPressed && !gamepadButtonStateRef.current.placeBomb) {
         placeBomb();
-      }
-      if (throwBombPressed && !gamepadButtonStateRef.current.throwBomb) {
-        throwBomb();
       }
 
       gamepadButtonStateRef.current = {
         placeBomb: placeBombPressed,
-        throwBomb: throwBombPressed
+        menu: menuPressed
       };
     });
 
     return () => {
       scene.onBeforeRenderObservable.remove(observer);
       clearGamepadMovement();
-      gamepadButtonStateRef.current = { placeBomb: false, throwBomb: false };
+      gamepadButtonStateRef.current = { placeBomb: false, menu: false };
     };
-  }, [placeBomb, scene, throwBomb, viewMode]);
+  }, [pauseGame, placeBomb, resumeGame, scene, viewMode]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -974,24 +1079,32 @@ export function ArenaContent({ arena, viewMode, visualStyle, onHudChange }: Aren
       ) : null}
 
       {isTopDown ? (
-        <TopDownStaticArenaLayer
-          arena={arena}
-          visualStyle={visualStyle}
-          floorCells={floorCells}
-          wallCells={wallCells}
-          destructibleCells={destructibleCells}
-        />
+        worldSkin === "office" ? (
+          <TopDownOfficeStaticArenaLayer floorCells={floorCells} wallCells={wallCells} destructibleCells={destructibleCells} />
+        ) : (
+          <TopDownStaticArenaLayer
+            arena={arena}
+            visualStyle={visualStyle}
+            floorCells={floorCells}
+            wallCells={wallCells}
+            destructibleCells={destructibleCells}
+          />
+        )
       ) : (
-        <StaticArenaLayer3D
-          arena={arena}
-          visualStyle={visualStyle}
-          floorCells={floorCells}
-          wallCells={wallCells}
-          destructibleCells={destructibleCells}
-          floorMaterial={floorMaterial}
-          wallMaterial={wallMaterial}
-          crateMaterial={crateMaterial}
-        />
+        worldSkin === "office" ? (
+          <OfficeStaticArenaLayer3D floorCells={floorCells} wallCells={wallCells} destructibleCells={destructibleCells} />
+        ) : (
+          <StaticArenaLayer3D
+            arena={arena}
+            visualStyle={visualStyle}
+            floorCells={floorCells}
+            wallCells={wallCells}
+            destructibleCells={destructibleCells}
+            floorMaterial={floorMaterial}
+            wallMaterial={wallMaterial}
+            crateMaterial={crateMaterial}
+          />
+        )
       )}
 
       {bombs.map(activeBomb =>
@@ -1104,6 +1217,25 @@ type MergedPrimitiveSpec = {
   cells: Cell[];
   material: StandardMaterial;
   createMesh: (cell: Cell, index: number) => Mesh;
+};
+
+interface OfficeDesk {
+  id: string;
+  x: number;
+  z: number;
+  horizontal: boolean;
+}
+
+interface OfficeDeskLayout {
+  desks: OfficeDesk[];
+  dividerCells: Cell[];
+}
+
+type MergedOfficeDeskSpec = {
+  name: string;
+  desks: OfficeDesk[];
+  material: StandardMaterial;
+  createMesh: (desk: OfficeDesk, index: number) => Mesh;
 };
 
 function StaticArenaLayer3D({
@@ -1492,6 +1624,301 @@ function StaticArenaLayer3D({
   return null;
 }
 
+function OfficeStaticArenaLayer3D({
+  floorCells,
+  wallCells,
+  destructibleCells
+}: {
+  floorCells: Cell[];
+  wallCells: Cell[];
+  destructibleCells: Cell[];
+}) {
+  const scene = useScene();
+  const perimeterWallCells = useMemo(() => wallCells.filter(isPerimeterWallCell), [wallCells]);
+  const interiorWallCells = useMemo(() => wallCells.filter(cell => !isPerimeterWallCell(cell)), [wallCells]);
+  const deskLayout = useMemo(() => createOfficeDeskLayout(interiorWallCells), [interiorWallCells]);
+  const desks = deskLayout.desks;
+  const dividerCells = deskLayout.dividerCells;
+  const deskChairSpots = useMemo(() => desks.flatMap(officeDeskChairSpots), [desks]);
+  const boxCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "box"), [destructibleCells]);
+  const chairCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "chair"), [destructibleCells]);
+  const cabinetCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "cabinet"), [destructibleCells]);
+
+  useLayoutEffect(() => {
+    const materials: StandardMaterial[] = [];
+    const registerMaterial = (name: string, look: MaterialLook) => {
+      const material = createStaticMaterialFromLook(scene, name, look);
+      materials.push(material);
+      return material;
+    };
+    const carpetMaterial = registerMaterial("office-3d-carpet-material", materialLook("#3E5D57", "#081412", "#9CA3AF"));
+    const corridorMaterial = registerMaterial("office-3d-corridor-material", materialLook("#6B7280", "#111827", "#D1D5DB"));
+    const wallMaterial = registerMaterial("office-3d-wall-material", materialLook("#D7D6CF", "#1F2937", "#FFFFFF"));
+    const glassMaterial = registerMaterial("office-3d-glass-material", materialLook("#A7F3FF", "#164E63", "#FFFFFF", 0.42));
+    const trimMaterial = registerMaterial("office-3d-trim-material", materialLook("#475569", "#111827", "#E5E7EB"));
+    const deskMaterial = registerMaterial("office-3d-desk-material", materialLook("#7C5A3D", "#1F130A", "#FED7AA"));
+    const legMaterial = registerMaterial("office-3d-desk-leg-material", materialLook("#334155", "#0F172A", "#CBD5E1"));
+    const monitorMaterial = registerMaterial("office-3d-monitor-material", materialLook("#111827", "#020617", "#94A3B8"));
+    const screenMaterial = registerMaterial("office-3d-screen-material", materialLook("#38BDF8", "#0E7490", "#E0F2FE"));
+    const chairMaterial = registerMaterial("office-3d-desk-chair-material", materialLook("#2563EB", "#0F172A", "#BFDBFE"));
+    const chairLegMaterial = registerMaterial("office-3d-desk-chair-leg-material", materialLook("#1F2937", "#020617", "#CBD5E1"));
+
+    const corridorCells = floorCells.filter(officeFloorIsCorridor);
+    const carpetCells = floorCells.filter(cell => !officeFloorIsCorridor(cell));
+    const meshes = [
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-carpet",
+        cells: carpetCells,
+        material: carpetMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-carpet-source-${index}`, cellPosition(cell.x, cell.z, -0.07), {
+            width: 0.96,
+            height: 0.14,
+            depth: 0.96
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-corridor",
+        cells: corridorCells,
+        material: corridorMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-corridor-source-${index}`, cellPosition(cell.x, cell.z, -0.065), {
+            width: 0.98,
+            height: 0.15,
+            depth: 0.98
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-perimeter-wall",
+        cells: perimeterWallCells,
+        material: wallMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-perimeter-wall-source-${index}`, cellPosition(cell.x, cell.z, 0.55), {
+            width: 0.92,
+            height: 1.16,
+            depth: 0.92
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-glass-panel",
+        cells: dividerCells,
+        material: glassMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(
+            scene,
+            `office-3d-glass-panel-source-${index}`,
+            cellPosition(cell.x, cell.z, 0.55),
+            { width: officeCellRotation(cell) ? 0.16 : 0.86, height: 1.0, depth: officeCellRotation(cell) ? 0.86 : 0.16 }
+          )
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-divider-trim",
+        cells: dividerCells,
+        material: trimMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-divider-trim-source-${index}`, cellPosition(cell.x, cell.z, 1.05), {
+            width: officeCellRotation(cell) ? 0.2 : 0.9,
+            height: 0.08,
+            depth: officeCellRotation(cell) ? 0.9 : 0.2
+          })
+      }),
+      createMergedOfficeDeskGroup(scene, {
+        name: "office-3d-desk-top",
+        desks,
+        material: deskMaterial,
+        createMesh: (desk, index) =>
+          createSourceBox(
+            scene,
+            `office-3d-desk-top-source-${index}`,
+            cellPosition(desk.x, desk.z, 0.48),
+            { width: desk.horizontal ? 1.86 : 0.68, height: 0.16, depth: desk.horizontal ? 0.68 : 1.86 }
+          )
+      }),
+      createMergedOfficeDeskGroup(scene, {
+        name: "office-3d-desk-leg",
+        desks,
+        material: legMaterial,
+        createMesh: (desk, index) =>
+          createSourceBox(scene, `office-3d-desk-leg-source-${index}`, cellPosition(desk.x, desk.z, 0.23), {
+            width: desk.horizontal ? 1.56 : 0.16,
+            height: 0.38,
+            depth: desk.horizontal ? 0.16 : 1.56
+          })
+      }),
+      createMergedOfficeDeskGroup(scene, {
+        name: "office-3d-monitor",
+        desks,
+        material: monitorMaterial,
+        createMesh: (desk, index) =>
+          createSourceBox(scene, `office-3d-monitor-source-${index}`, officeDeskMonitorPosition(desk, 0.74, 0), {
+            width: 0.38,
+            height: 0.34,
+            depth: 0.08
+          }, { rotationY: desk.horizontal ? 0 : Tools.ToRadians(90) })
+      }),
+      createMergedOfficeDeskGroup(scene, {
+        name: "office-3d-monitor-screen",
+        desks,
+        material: screenMaterial,
+        createMesh: (desk, index) =>
+          createSourceBox(scene, `office-3d-monitor-screen-source-${index}`, officeDeskMonitorPosition(desk, 0.74, -0.045), {
+            width: 0.28,
+            height: 0.22,
+            depth: 0.025
+          }, { rotationY: desk.horizontal ? 0 : Tools.ToRadians(90) })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-desk-chair-seat",
+        cells: deskChairSpots,
+        material: chairMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-desk-chair-seat-source-${index}`, cellPosition(cell.x, cell.z, 0.28), {
+            width: 0.46,
+            height: 0.14,
+            depth: 0.46
+          }, { rotationY: officeCellRotation(cell) ? Tools.ToRadians(90) : 0 })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-desk-chair-back",
+        cells: deskChairSpots,
+        material: chairMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-desk-chair-back-source-${index}`, cellPosition(cell.x, cell.z + 0.2, 0.55), {
+            width: 0.46,
+            height: 0.5,
+            depth: 0.08
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-desk-chair-base",
+        cells: deskChairSpots,
+        material: chairLegMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-desk-chair-base-source-${index}`, cellPosition(cell.x, cell.z, 0.13), {
+            width: 0.3,
+            height: 0.12,
+            depth: 0.3
+          })
+      })
+    ].filter((mesh): mesh is Mesh => mesh !== null);
+
+    return () => {
+      disposeMergedLayer(meshes, materials);
+    };
+  }, [deskChairSpots, desks, dividerCells, floorCells, perimeterWallCells, scene]);
+
+  useLayoutEffect(() => {
+    const materials: StandardMaterial[] = [];
+    const registerMaterial = (name: string, look: MaterialLook) => {
+      const material = createStaticMaterialFromLook(scene, name, look);
+      materials.push(material);
+      return material;
+    };
+    const boxMaterial = registerMaterial("office-3d-moving-box-material", materialLook("#A16207", "#2B1706", "#FDE68A"));
+    const tapeMaterial = registerMaterial("office-3d-packing-tape-material", materialLook("#FDE68A", "#3B2605", "#FFF7ED"));
+    const chairMaterial = registerMaterial("office-3d-chair-material", materialLook("#2563EB", "#0F172A", "#BFDBFE"));
+    const chairLegMaterial = registerMaterial("office-3d-chair-leg-material", materialLook("#1F2937", "#020617", "#CBD5E1"));
+    const cabinetMaterial = registerMaterial("office-3d-cabinet-material", materialLook("#64748B", "#111827", "#E2E8F0"));
+    const handleMaterial = registerMaterial("office-3d-cabinet-handle-material", materialLook("#E5E7EB", "#111827", "#FFFFFF"));
+    const meshes = [
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-moving-box",
+        cells: boxCells,
+        material: boxMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-moving-box-source-${index}`, cellPosition(cell.x, cell.z, 0.34), {
+            width: 0.72,
+            height: 0.72,
+            depth: 0.72
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-moving-box-tape",
+        cells: boxCells,
+        material: tapeMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-moving-box-tape-source-${index}`, cellPosition(cell.x, cell.z, 0.72), {
+            width: 0.12,
+            height: 0.035,
+            depth: 0.76
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-chair-seat",
+        cells: chairCells,
+        material: chairMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-chair-seat-source-${index}`, cellPosition(cell.x, cell.z, 0.32), {
+            width: 0.62,
+            height: 0.16,
+            depth: 0.62
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-chair-back",
+        cells: chairCells,
+        material: chairMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-chair-back-source-${index}`, cellPosition(cell.x, cell.z + 0.27, 0.62), {
+            width: 0.62,
+            height: 0.56,
+            depth: 0.1
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-chair-base",
+        cells: chairCells,
+        material: chairLegMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-chair-base-source-${index}`, cellPosition(cell.x, cell.z, 0.16), {
+            width: 0.42,
+            height: 0.16,
+            depth: 0.42
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-cabinet",
+        cells: cabinetCells,
+        material: cabinetMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-cabinet-source-${index}`, cellPosition(cell.x, cell.z, 0.42), {
+            width: 0.68,
+            height: 0.88,
+            depth: 0.58
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-cabinet-handle-a",
+        cells: cabinetCells,
+        material: handleMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-cabinet-handle-a-source-${index}`, cellPosition(cell.x, cell.z - 0.3, 0.56), {
+            width: 0.28,
+            height: 0.04,
+            depth: 0.035
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-cabinet-handle-b",
+        cells: cabinetCells,
+        material: handleMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-cabinet-handle-b-source-${index}`, cellPosition(cell.x, cell.z - 0.3, 0.28), {
+            width: 0.28,
+            height: 0.04,
+            depth: 0.035
+          })
+      })
+    ].filter((mesh): mesh is Mesh => mesh !== null);
+
+    return () => {
+      disposeMergedLayer(meshes, materials);
+    };
+  }, [boxCells, cabinetCells, chairCells, scene]);
+
+  return null;
+}
+
 function TopDownStaticArenaLayer({
   arena,
   visualStyle,
@@ -1669,6 +2096,180 @@ function TopDownStaticArenaLayer({
   return null;
 }
 
+function TopDownOfficeStaticArenaLayer({
+  floorCells,
+  wallCells,
+  destructibleCells
+}: {
+  floorCells: Cell[];
+  wallCells: Cell[];
+  destructibleCells: Cell[];
+}) {
+  const scene = useScene();
+  const perimeterWallCells = useMemo(() => wallCells.filter(isPerimeterWallCell), [wallCells]);
+  const interiorWallCells = useMemo(() => wallCells.filter(cell => !isPerimeterWallCell(cell)), [wallCells]);
+  const deskLayout = useMemo(() => createOfficeDeskLayout(interiorWallCells), [interiorWallCells]);
+  const desks = deskLayout.desks;
+  const dividerCells = deskLayout.dividerCells;
+  const deskChairSpots = useMemo(() => desks.flatMap(officeDeskChairSpots), [desks]);
+  const boxCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "box"), [destructibleCells]);
+  const chairCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "chair"), [destructibleCells]);
+  const cabinetCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "cabinet"), [destructibleCells]);
+
+  useLayoutEffect(() => {
+    const carpetMaterial = createTopDownStaticMaterial(scene, "topdown-office-carpet-material", "#3E5D57");
+    const corridorMaterial = createTopDownStaticMaterial(scene, "topdown-office-corridor-material", "#737B86");
+    const wallMaterial = createTopDownStaticMaterial(scene, "topdown-office-wall-material", "#D7D6CF");
+    const glassMaterial = createTopDownStaticMaterial(scene, "topdown-office-glass-material", "#8BD3E6", 0.72);
+    const deskMaterial = createTopDownStaticMaterial(scene, "topdown-office-desk-material", "#7C5A3D");
+    const screenMaterial = createTopDownStaticMaterial(scene, "topdown-office-screen-material", "#38BDF8");
+    const chairMaterial = createTopDownStaticMaterial(scene, "topdown-office-desk-chair-material", "#2563EB");
+    const outlineMaterial = createTopDownStaticMaterial(scene, "topdown-office-outline-material", "#172033");
+
+    const corridorCells = floorCells.filter(officeFloorIsCorridor);
+    const carpetCells = floorCells.filter(cell => !officeFloorIsCorridor(cell));
+    const meshes = [
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-carpet",
+        cells: carpetCells,
+        material: carpetMaterial,
+        options: { width: 1, height: 0.08, depth: 1 },
+        position: cell => cellPosition(cell.x, cell.z, -0.055)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-corridor",
+        cells: corridorCells,
+        material: corridorMaterial,
+        options: { width: 1, height: 0.08, depth: 1 },
+        position: cell => cellPosition(cell.x, cell.z, -0.05)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-perimeter-outline",
+        cells: perimeterWallCells,
+        material: outlineMaterial,
+        options: { width: 0.94, height: 0.08, depth: 0.94 },
+        position: cell => cellPosition(cell.x, cell.z, 0.045)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-perimeter-wall",
+        cells: perimeterWallCells,
+        material: wallMaterial,
+        options: { width: 0.84, height: 0.1, depth: 0.84 },
+        position: cell => cellPosition(cell.x, cell.z, 0.09)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-divider",
+        cells: dividerCells,
+        material: glassMaterial,
+        options: { width: 0.82, height: 0.1, depth: 0.18 },
+        position: cell => cellPosition(cell.x, cell.z, 0.12)
+      }),
+      createMergedTopDownOfficeDesks(scene, {
+        name: "topdown-office-desk",
+        desks,
+        material: deskMaterial,
+        createMesh: (desk, index) =>
+          createSourceBox(scene, `topdown-office-desk-source-${index}`, cellPosition(desk.x, desk.z, 0.1), {
+            width: desk.horizontal ? 1.86 : 0.68,
+            height: 0.1,
+            depth: desk.horizontal ? 0.68 : 1.86
+          })
+      }),
+      createMergedTopDownOfficeDesks(scene, {
+        name: "topdown-office-monitor",
+        desks,
+        material: screenMaterial,
+        createMesh: (desk, index) =>
+          createSourceBox(scene, `topdown-office-monitor-source-${index}`, officeDeskMonitorPosition(desk, 0.17, 0), {
+            width: 0.34,
+            height: 0.04,
+            depth: 0.12
+          }, { rotationY: desk.horizontal ? 0 : Tools.ToRadians(90) })
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-desk-chair",
+        cells: deskChairSpots,
+        material: chairMaterial,
+        options: { width: 0.42, height: 0.08, depth: 0.42 },
+        position: cell => cellPosition(cell.x, cell.z, 0.14)
+      })
+    ].filter((mesh): mesh is Mesh => mesh !== null);
+    const materials = [carpetMaterial, corridorMaterial, wallMaterial, glassMaterial, deskMaterial, screenMaterial, chairMaterial, outlineMaterial];
+
+    return () => {
+      disposeTopDownMergedLayer(meshes, materials);
+    };
+  }, [deskChairSpots, desks, dividerCells, floorCells, perimeterWallCells, scene]);
+
+  useLayoutEffect(() => {
+    const outlineMaterial = createTopDownStaticMaterial(scene, "topdown-office-object-outline-material", "#172033");
+    const boxMaterial = createTopDownStaticMaterial(scene, "topdown-office-box-material", "#A16207");
+    const tapeMaterial = createTopDownStaticMaterial(scene, "topdown-office-tape-material", "#FDE68A");
+    const chairMaterial = createTopDownStaticMaterial(scene, "topdown-office-chair-material", "#2563EB");
+    const cabinetMaterial = createTopDownStaticMaterial(scene, "topdown-office-cabinet-material", "#64748B");
+    const handleMaterial = createTopDownStaticMaterial(scene, "topdown-office-handle-material", "#E5E7EB");
+
+    const meshes = [
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-box-outline",
+        cells: destructibleCells,
+        material: outlineMaterial,
+        options: { width: 0.88, height: 0.08, depth: 0.88 },
+        position: cell => cellPosition(cell.x, cell.z, 0.045)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-box",
+        cells: boxCells,
+        material: boxMaterial,
+        options: { width: 0.72, height: 0.1, depth: 0.72 },
+        position: cell => cellPosition(cell.x, cell.z, 0.1)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-box-tape",
+        cells: boxCells,
+        material: tapeMaterial,
+        options: { width: 0.1, height: 0.04, depth: 0.74 },
+        position: cell => cellPosition(cell.x, cell.z, 0.17)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-chair-seat",
+        cells: chairCells,
+        material: chairMaterial,
+        options: { width: 0.58, height: 0.1, depth: 0.48 },
+        position: cell => cellPosition(cell.x, cell.z + 0.08, 0.1)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-chair-back",
+        cells: chairCells,
+        material: chairMaterial,
+        options: { width: 0.58, height: 0.04, depth: 0.12 },
+        position: cell => cellPosition(cell.x, cell.z - 0.25, 0.17)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-cabinet",
+        cells: cabinetCells,
+        material: cabinetMaterial,
+        options: { width: 0.66, height: 0.1, depth: 0.76 },
+        position: cell => cellPosition(cell.x, cell.z, 0.1)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-cabinet-handle",
+        cells: cabinetCells,
+        material: handleMaterial,
+        options: { width: 0.28, height: 0.04, depth: 0.06 },
+        position: cell => cellPosition(cell.x, cell.z - 0.2, 0.17)
+      })
+    ].filter((mesh): mesh is Mesh => mesh !== null);
+    const materials = [outlineMaterial, boxMaterial, tapeMaterial, chairMaterial, cabinetMaterial, handleMaterial];
+
+    return () => {
+      disposeTopDownMergedLayer(meshes, materials);
+    };
+  }, [boxCells, cabinetCells, chairCells, destructibleCells, scene]);
+
+  return null;
+}
+
 function createTopDownStaticMaterial(scene: BabylonScene, name: string, diffuse: string, alpha = 1) {
   const material = new StandardMaterial(name, scene);
   material.diffuseColor = Color3.FromHexString(diffuse);
@@ -1737,6 +2338,32 @@ function createMergedPrimitiveGroup(scene: BabylonScene, spec: MergedPrimitiveSp
   mergedMesh.isPickable = false;
   mergedMesh.freezeWorldMatrix();
   return mergedMesh;
+}
+
+function createMergedOfficeDeskGroup(scene: BabylonScene, spec: MergedOfficeDeskSpec) {
+  if (spec.desks.length === 0) {
+    return null;
+  }
+
+  const sourceMeshes = spec.desks.map((desk, index) => {
+    const mesh = spec.createMesh(desk, index);
+    mesh.material = spec.material;
+    return mesh;
+  });
+  const mergedMesh = Mesh.MergeMeshes(sourceMeshes, true, true);
+  if (!mergedMesh) {
+    return null;
+  }
+
+  mergedMesh.name = spec.name;
+  mergedMesh.material = spec.material;
+  mergedMesh.isPickable = false;
+  mergedMesh.freezeWorldMatrix();
+  return mergedMesh;
+}
+
+function createMergedTopDownOfficeDesks(scene: BabylonScene, spec: MergedOfficeDeskSpec) {
+  return createMergedOfficeDeskGroup(scene, spec);
 }
 
 function createSourceBox(
@@ -2323,17 +2950,6 @@ function TopDownPowerUpGlyph({ powerUp, ink }: { powerUp: ActivePowerUp; ink: st
           </box>
         </>
       );
-    case "throw_bomb":
-      return (
-        <>
-          <box name={`topdown-powerup-throw-stem-${x}-${z}`} position={cellPosition(x, z + 0.06, 0.29)} options={{ width: 0.08, height: 0.03, depth: 0.34 }}>
-            {material}
-          </box>
-          <box name={`topdown-powerup-throw-arm-${x}-${z}`} position={cellPosition(x + 0.12, z - 0.1, 0.29)} rotationY={Tools.ToRadians(-45)} options={{ width: 0.08, height: 0.03, depth: 0.24 }}>
-            {material}
-          </box>
-        </>
-      );
   }
 }
 
@@ -2624,7 +3240,7 @@ const ArenaCamera = memo(function ArenaCamera({
 
   useEffect(() => {
     const camera = scene.getCameraByName("arena-camera") as ArcRotateCamera | null;
-    if (!camera || viewMode !== "three_d") {
+    if (!enableCameraFollow || !camera || viewMode !== "three_d") {
       return;
     }
 
@@ -2642,7 +3258,7 @@ const ArenaCamera = memo(function ArenaCamera({
 
   useEffect(() => {
     const camera = scene.getCameraByName("arena-camera") as ArcRotateCamera | null;
-    if (!camera || viewMode !== "fps") {
+    if (!enableCameraFollow || !camera || viewMode !== "fps") {
       return;
     }
 
@@ -2660,7 +3276,7 @@ const ArenaCamera = memo(function ArenaCamera({
 
   useEffect(() => {
     const camera = scene.getCameraByName("arena-camera") as ArcRotateCamera | null;
-    if (!camera || viewMode !== "top_down") {
+    if (!enableCameraFollow || !camera || viewMode !== "top_down") {
       return;
     }
 
@@ -3529,17 +4145,6 @@ function PowerUpMarker({ powerUp, isTopDown }: { powerUp: ActivePowerUp; isTopDo
           </box>
         </>
       );
-    case "throw_bomb":
-      return (
-        <>
-          <box name={`powerup-marker-throw-stem-${powerUp.cell.x}-${powerUp.cell.z}`} position={cellPosition(powerUp.cell.x, powerUp.cell.z + 0.06, isTopDown ? 0.38 : 0.405)} options={{ width: isTopDown ? 0.08 : 0.1, height: isTopDown ? 0.08 : 0.06, depth: isTopDown ? 0.34 : 0.36 }}>
-            {markerMaterial}
-          </box>
-          <box name={`powerup-marker-throw-arm-${powerUp.cell.x}-${powerUp.cell.z}`} position={cellPosition(powerUp.cell.x + 0.12, powerUp.cell.z - 0.1, isTopDown ? 0.38 : 0.405)} rotationY={Tools.ToRadians(-45)} options={{ width: isTopDown ? 0.08 : 0.1, height: isTopDown ? 0.08 : 0.06, depth: isTopDown ? 0.24 : 0.26 }}>
-            {markerMaterial}
-          </box>
-        </>
-      );
   }
 }
 
@@ -4096,6 +4701,18 @@ function firstConnectedGamepad(): Gamepad | null {
   return null;
 }
 
+function formatControllerName(id: string) {
+  if (/xbox/i.test(id)) {
+    return "Xbox";
+  }
+
+  if (/dualsense|dualshock|playstation|wireless controller/i.test(id)) {
+    return "PlayStation";
+  }
+
+  return "Gamepad";
+}
+
 function gamepadMoveCommand(gamepad: Gamepad): MoveCommand | null {
   const dpadVertical = gamepadButtonPressed(gamepad, 12) ? -1 : gamepadButtonPressed(gamepad, 13) ? 1 : 0;
   const dpadHorizontal = gamepadButtonPressed(gamepad, 14) ? -1 : gamepadButtonPressed(gamepad, 15) ? 1 : 0;
@@ -4358,6 +4975,83 @@ function crateVisualVariant(cell: Cell) {
   };
 }
 
+function isPerimeterWallCell(cell: Cell) {
+  return cell.x === 0 || cell.z === 0 || cell.x === size - 1 || cell.z === size - 1;
+}
+
+function officeFloorIsCorridor(cell: Cell) {
+  return cell.x === center || cell.z === center || (cell.x > center - 2 && cell.x < center + 2 && cell.z % 6 === 0);
+}
+
+function createOfficeDeskLayout(cells: Cell[]): OfficeDeskLayout {
+  const remainingCells = new Map(cells.map(cell => [cellKey(cell), cell]));
+  const desks: OfficeDesk[] = [];
+  const dividerCells: Cell[] = [];
+
+  for (const cell of [...cells].sort((a, b) => a.z - b.z || a.x - b.x)) {
+    const key = cellKey(cell);
+    if (!remainingCells.has(key)) {
+      continue;
+    }
+
+    const partner = [
+      { x: cell.x + 1, z: cell.z },
+      { x: cell.x, z: cell.z + 1 },
+      { x: cell.x - 1, z: cell.z },
+      { x: cell.x, z: cell.z - 1 }
+    ].find(candidate => remainingCells.has(cellKey(candidate)));
+
+    if (!partner) {
+      dividerCells.push(cell);
+      remainingCells.delete(key);
+      continue;
+    }
+
+    remainingCells.delete(key);
+    remainingCells.delete(cellKey(partner));
+    desks.push({
+      id: `${cell.x}-${cell.z}-${partner.x}-${partner.z}`,
+      x: (cell.x + partner.x) / 2,
+      z: (cell.z + partner.z) / 2,
+      horizontal: cell.z === partner.z
+    });
+  }
+
+  return { desks, dividerCells };
+}
+
+function officeDeskChairSpots(desk: OfficeDesk): Cell[] {
+  if (desk.horizontal) {
+    return [
+      { x: desk.x - 0.5, z: desk.z + 0.72 },
+      { x: desk.x + 0.5, z: desk.z + 0.72 }
+    ];
+  }
+
+  return [
+    { x: desk.x + 0.72, z: desk.z - 0.5 },
+    { x: desk.x + 0.72, z: desk.z + 0.5 }
+  ];
+}
+
+function officeDeskMonitorPosition(desk: OfficeDesk, y: number, frontOffset: number) {
+  const distance = 0.13 - frontOffset;
+  return cellPosition(desk.x + (desk.horizontal ? 0 : -distance), desk.z + (desk.horizontal ? -distance : 0), y);
+}
+
+function officeDestructibleKind(cell: Cell): "box" | "chair" | "cabinet" {
+  const variant = Math.abs(cell.x * 13 + cell.z * 17 + cell.x * cell.z) % 3;
+  if (variant === 0) {
+    return "box";
+  }
+
+  return variant === 1 ? "chair" : "cabinet";
+}
+
+function officeCellRotation(cell: Cell) {
+  return (cell.x + cell.z) % 2 === 0;
+}
+
 function powerUpDropForCell(cell: Cell): PowerUpType | null {
   const seed = Math.abs(cell.x * 11 + cell.z * 5 + cell.x * cell.x + cell.z * cell.z) % 23;
   if (seed <= 1) {
@@ -4376,10 +5070,6 @@ function powerUpDropForCell(cell: Cell): PowerUpType | null {
     return "bomb_kick";
   }
 
-  if (seed === 7) {
-    return "throw_bomb";
-  }
-
   return null;
 }
 
@@ -4393,8 +5083,6 @@ function powerUpLook(type: PowerUpType) {
       return { color: "#22C55E", diameter: 0.48, tessellation: 3 };
     case "bomb_kick":
       return { color: "#F43F5E", diameter: 0.5, tessellation: 4 };
-    case "throw_bomb":
-      return { color: "#A78BFA", diameter: 0.5, tessellation: 5 };
   }
 }
 
@@ -4922,23 +5610,6 @@ function isBombTravelCellFree(
   const key = cellKey(cell);
   const ignoredKey = cellKey(ignoredBombCell);
   return !wallSet.has(key) && !destructibleSet.has(key) && (!bombSet.has(key) || key === ignoredKey);
-}
-
-function findThrownBombLandingCell(
-  origin: Cell,
-  direction: Cell,
-  wallSet: Set<string>,
-  destructibleSet: Set<string>,
-  bombSet: Set<string>
-) {
-  for (let distance = 3; distance >= 1; distance -= 1) {
-    const candidate = { x: origin.x + direction.x * distance, z: origin.z + direction.z * distance };
-    if (isWalkable(candidate, wallSet, destructibleSet, bombSet)) {
-      return candidate;
-    }
-  }
-
-  return null;
 }
 
 function isCellInActiveBlast(cell: Cell, blasts: ActiveBlast[]) {

@@ -1,20 +1,21 @@
 import { Color3, Color4 } from "@babylonjs/core";
 import type { Scene as BabylonScene } from "@babylonjs/core/scene";
-import { useState } from "react";
+import { memo, useCallback, useState } from "react";
 import { Engine } from "reactylon/web";
 import { Scene } from "reactylon";
-import type { ArenaState, ViewMode, VisualStyle } from "../types";
+import type { ArenaState, ViewMode, VisualStyle, WorldSkin } from "../types";
 import { ArenaContent, type ArenaHudState } from "./ArenaContent";
 
 interface ArenaViewportProps {
   arena: ArenaState;
   isApplying: boolean;
   viewMode: ViewMode;
+  worldSkin: WorldSkin;
 }
 
 const baseVisualStyle: VisualStyle = "arcade_premium";
 
-export function ArenaViewport({ arena, isApplying, viewMode }: ArenaViewportProps) {
+export function ArenaViewport({ arena, isApplying, viewMode, worldSkin }: ArenaViewportProps) {
   const [sessionId, setSessionId] = useState(0);
   const [hud, setHud] = useState<ArenaHudState>({
     elapsedSeconds: 0,
@@ -25,11 +26,11 @@ export function ArenaViewport({ arena, isApplying, viewMode }: ArenaViewportProp
     enemiesRemaining: 5,
     speedLevel: 0,
     canKickBombs: false,
-    canThrowBombs: false,
+    controllerName: null,
     status: "playing"
   });
 
-  const restartGame = () => {
+  const restartGame = useCallback(() => {
     setHud({
       elapsedSeconds: 0,
       availableBombs: 1,
@@ -39,21 +40,30 @@ export function ArenaViewport({ arena, isApplying, viewMode }: ArenaViewportProp
       enemiesRemaining: 5,
       speedLevel: 0,
       canKickBombs: false,
-      canThrowBombs: false,
+      controllerName: null,
       status: "playing"
     });
     setSessionId(currentSessionId => currentSessionId + 1);
-  };
+  }, []);
 
   return (
     <section className={`arena-stage ${viewMode === "top_down" ? "top-down" : ""}`}>
-      <Engine canvasId="reactylon-canvas" forceWebGL engineOptions={{ antialias: true, adaptToDeviceRatio: true }}>
-        <Scene onSceneReady={scene => prepareScene(scene, arena)}>
-          <ArenaContent key={sessionId} arena={arena} viewMode={viewMode} visualStyle={baseVisualStyle} onHudChange={setHud} />
-        </Scene>
-      </Engine>
+      <ArenaScene
+        arena={arena}
+        sessionId={sessionId}
+        viewMode={viewMode}
+        worldSkin={worldSkin}
+        onHudChange={setHud}
+        onRestart={restartGame}
+      />
       <ArenaHud hud={hud} />
-      {hud.status !== "playing" ? <GameResultOverlay status={hud.status} onRestart={restartGame} /> : null}
+      {hud.status !== "playing" ? (
+        <GameResultOverlay
+          status={hud.status}
+          onResume={() => window.dispatchEvent(new CustomEvent("arena:resume-game"))}
+          onRestart={restartGame}
+        />
+      ) : null}
       <div className={`mutation-banner ${isApplying ? "active" : ""}`}>
         <span>{arena.overlay}</span>
       </div>
@@ -61,14 +71,46 @@ export function ArenaViewport({ arena, isApplying, viewMode }: ArenaViewportProp
   );
 }
 
+const ArenaScene = memo(function ArenaScene({
+  arena,
+  sessionId,
+  viewMode,
+  worldSkin,
+  onHudChange,
+  onRestart
+}: {
+  arena: ArenaState;
+  sessionId: number;
+  viewMode: ViewMode;
+  worldSkin: WorldSkin;
+  onHudChange: (hud: ArenaHudState) => void;
+  onRestart: () => void;
+}) {
+  return (
+    <Engine canvasId="reactylon-canvas" forceWebGL engineOptions={{ antialias: true, adaptToDeviceRatio: true }}>
+      <Scene onSceneReady={scene => prepareScene(scene, arena)}>
+        <ArenaContent
+          key={sessionId}
+          arena={arena}
+          viewMode={viewMode}
+          worldSkin={worldSkin}
+          visualStyle={baseVisualStyle}
+          onHudChange={onHudChange}
+          onRestart={onRestart}
+        />
+      </Scene>
+    </Engine>
+  );
+});
+
 function ArenaHud({ hud }: { hud: ArenaHudState }) {
   return (
     <div className="arena-hud" aria-label="HUD partita" data-testid="arena-hud">
-      <div data-testid="hud-time">
+      <div className="primary" data-testid="hud-time">
         <span>Tempo</span>
         <strong>{formatElapsedTime(hud.elapsedSeconds)}</strong>
       </div>
-      <div data-testid="hud-bombs">
+      <div className="primary" data-testid="hud-bombs">
         <span>Bombe</span>
         <strong>
           {hud.availableBombs}/{hud.bombCapacity}
@@ -92,17 +134,44 @@ function ArenaHud({ hud }: { hud: ArenaHudState }) {
       </div>
       <div data-testid="hud-kick">
         <span>Kick</span>
-        <strong>{hud.canKickBombs ? "Sì" : "No"}</strong>
+        <strong>{hud.canKickBombs ? "On" : "No"}</strong>
       </div>
-      <div data-testid="hud-throw">
-        <span>Lancio</span>
-        <strong>{hud.canThrowBombs ? "Sì" : "No"}</strong>
+      <div data-testid="hud-controller">
+        <span>Controller</span>
+        <strong>{hud.controllerName ?? "No"}</strong>
       </div>
     </div>
   );
 }
 
-function GameResultOverlay({ status, onRestart }: { status: "won" | "lost"; onRestart: () => void }) {
+function GameResultOverlay({
+  status,
+  onResume,
+  onRestart
+}: {
+  status: Exclude<ArenaHudState["status"], "playing">;
+  onResume: () => void;
+  onRestart: () => void;
+}) {
+  if (status === "paused") {
+    return (
+      <div className="game-result paused">
+        <div>
+          <span>Partita in pausa</span>
+          <strong>Pausa</strong>
+          <div className="game-result-actions">
+            <button type="button" onClick={onResume}>
+              Riprendi
+            </button>
+            <button type="button" onClick={onRestart}>
+              Ricomincia
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`game-result ${status}`}>
       <div>

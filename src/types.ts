@@ -72,6 +72,7 @@ export type ExplosionStyle =
 
 export type ViewMode = "top_down" | "three_d" | "fps";
 export type VisualStyle = "arcade_premium" | "toy_like" | "neon_cinematic";
+export type WorldSkin = "arena" | "office";
 
 export type DirectorActionType =
   | "show_overlay"

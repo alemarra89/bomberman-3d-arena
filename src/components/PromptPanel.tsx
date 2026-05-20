@@ -1,11 +1,13 @@
 import type React from "react";
-import type { ViewMode } from "../types";
+import type { ViewMode, WorldSkin } from "../types";
 import type { ArenaDirector } from "../useArenaDirector";
 
 interface PromptPanelProps {
   director: ArenaDirector;
   viewMode: ViewMode;
   setViewMode: React.Dispatch<React.SetStateAction<ViewMode>>;
+  worldSkin: WorldSkin;
+  setWorldSkin: React.Dispatch<React.SetStateAction<WorldSkin>>;
 }
 
 const viewModes: Array<{ value: ViewMode; label: string }> = [
@@ -14,7 +16,12 @@ const viewModes: Array<{ value: ViewMode; label: string }> = [
   { value: "fps", label: "FPS" }
 ];
 
-export function PromptPanel({ director, viewMode, setViewMode }: PromptPanelProps) {
+const worldSkins: Array<{ value: WorldSkin; label: string }> = [
+  { value: "arena", label: "Arena" },
+  { value: "office", label: "Ufficio" }
+];
+
+export function PromptPanel({ director, viewMode, setViewMode, worldSkin, setWorldSkin }: PromptPanelProps) {
   const {
     arena,
     prompt,
@@ -74,7 +81,7 @@ export function PromptPanel({ director, viewMode, setViewMode }: PromptPanelProp
         >
           Piazza bomba
         </button>
-        <span>WASD / frecce o controller muovi | A bomba | Y lancia | stick destro camera | LT/RT zoom</span>
+        <span>WASD / frecce o controller muovi | A bomba | Esc/P pausa | stick destro camera | LT/RT zoom</span>
       </div>
 
       <div className="view-mode-switch" role="tablist" aria-label="Modalita vista">
@@ -93,6 +100,22 @@ export function PromptPanel({ director, viewMode, setViewMode }: PromptPanelProp
         ))}
       </div>
 
+      <div className="world-skin-switch" role="tablist" aria-label="Mondo">
+        {worldSkins.map(skin => (
+          <button
+            key={skin.value}
+            type="button"
+            data-testid={`world-skin-${skin.value}`}
+            role="tab"
+            aria-selected={worldSkin === skin.value}
+            className={worldSkin === skin.value ? "active" : ""}
+            onClick={() => setWorldSkin(skin.value)}
+          >
+            {skin.label}
+          </button>
+        ))}
+      </div>
+
       <div className="quick-prompts" aria-label="Prompt rapidi">
         {examples.map(example => (
           <button key={example} type="button" onClick={() => runExample(example)}>
@@ -102,6 +125,31 @@ export function PromptPanel({ director, viewMode, setViewMode }: PromptPanelProp
       </div>
 
       {error ? <div className="error-box">{error}</div> : null}
+
+      <section className="powerup-legend" aria-label="Legenda power-up">
+        <div className="panel-header">
+          <span>Power-up</span>
+          <span>effetti</span>
+        </div>
+        <div className="powerup-grid">
+          <div>
+            <strong>BB</strong>
+            <span>+1 bomba massima piazzabile.</span>
+          </div>
+          <div>
+            <strong>R+</strong>
+            <span>+1 raggio esplosione.</span>
+          </div>
+          <div>
+            <strong>SP</strong>
+            <span>Movimento più rapido.</span>
+          </div>
+          <div>
+            <strong>FK</strong>
+            <span>Spingi le bombe camminandoci contro.</span>
+          </div>
+        </div>
+      </section>
 
       <section className="state-strip" aria-label="Stato arena">
         <div>
@@ -118,13 +166,13 @@ export function PromptPanel({ director, viewMode, setViewMode }: PromptPanelProp
         </div>
       </section>
 
-      <section className="json-panel" aria-label="JSON generato">
-        <div className="panel-header">
+      <details className="json-panel">
+        <summary className="panel-header">
           <span>ArenaMutationPlan</span>
           <span>{plan ? `${plan.timeline.length} eventi / ${source ?? "codex"}` : "in attesa"}</span>
-        </div>
+        </summary>
         <pre>{plan ? JSON.stringify(plan, null, 2) : "Il JSON strutturato generato da codex exec comparira qui."}</pre>
-      </section>
+      </details>
     </aside>
   );
 }
