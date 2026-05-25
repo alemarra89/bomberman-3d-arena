@@ -304,12 +304,17 @@ If random generation creates too much variation in available power-ups, the next
 | `WASD` / arrow keys | Move |
 | `Space` / `B` | Place bomb |
 | `T` | Throw bomb after collecting the glove |
+| `Esc` / `P` | Pause / resume |
+| `R` while paused | Restart the run |
 | Mouse drag / wheel | Orbit and zoom in 3D |
 | Xbox left stick / D-pad | Grid movement, translated to the dominant cardinal direction |
 | Xbox right stick | Camera control in 3D and FPS |
 | Xbox `LT` / `RT` | Zoom out / zoom in in 3D and FPS |
 | Xbox `A` | Place bomb |
 | Xbox `Y` | Throw bomb after collecting the glove |
+| Xbox `Menu` | Pause / resume |
+| Xbox `A` while paused | Resume |
+| Xbox `Y` while paused | Restart the run |
 
 ### Controller support
 
@@ -324,6 +329,7 @@ Current mapping:
 | LT / RT | Zoom out / zoom in in 3D and FPS |
 | Xbox `A` / PlayStation `X` | Place bomb |
 | Xbox `Y` / PlayStation `Triangle` | Throw bomb after collecting the glove |
+| Xbox Menu / PlayStation Options | Pause / resume |
 
 Still to evaluate on hardware:
 
@@ -331,8 +337,7 @@ Still to evaluate on hardware:
 - camera sensitivity;
 - Y-axis preference;
 - whether FPS camera motion remains playable during combat;
-- whether we need a visible controller-connected HUD indicator;
-- Start / Options pause mapping later.
+- whether the visible controller-connected HUD indicator needs more detail than the compact `Xbox` / `Gamepad` label.
 
 ---
 
