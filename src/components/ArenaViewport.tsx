@@ -90,7 +90,7 @@ const ArenaScene = memo(function ArenaScene({
     <Engine canvasId="reactylon-canvas" forceWebGL engineOptions={{ antialias: true, adaptToDeviceRatio: true }}>
       <Scene onSceneReady={scene => prepareScene(scene, arena)}>
         <ArenaContent
-          key={sessionId}
+          key={`${sessionId}-${worldSkin}`}
           arena={arena}
           viewMode={viewMode}
           worldSkin={worldSkin}

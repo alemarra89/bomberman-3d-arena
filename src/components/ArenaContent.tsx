@@ -22,7 +22,7 @@ interface ArenaContentProps {
   visualStyle: VisualStyle;
   onHudChange?: (hud: ArenaHudState) => void;
   onRestart?: () => void;
-  key?: number;
+  key?: string | number;
 }
 
 interface Cell {
@@ -157,7 +157,7 @@ export function ArenaContent({ arena, viewMode, worldSkin, visualStyle, onHudCha
   const crateMaterial = materialLookForView("crate", crates, isTopDown, visualStyle);
   const bombMaterial = materialLookForView("bomb", bomb, isTopDown, visualStyle);
 
-  const generatedLevel = useMemo(() => createGeneratedLevel(), []);
+  const generatedLevel = useMemo(() => createGeneratedLevel(worldSkin), [worldSkin]);
   const wallCells = generatedLevel.wallCells;
   const wallSet = useMemo(() => toCellSet(wallCells), [wallCells]);
   const floorCells = useMemo(() => createFloorCells(), []);
@@ -1635,14 +1635,23 @@ function OfficeStaticArenaLayer3D({
 }) {
   const scene = useScene();
   const perimeterWallCells = useMemo(() => wallCells.filter(isPerimeterWallCell), [wallCells]);
-  const interiorWallCells = useMemo(() => wallCells.filter(cell => !isPerimeterWallCell(cell)), [wallCells]);
+  const structuralWallCells = useMemo(() => wallCells.filter(isOfficeStructuralWallCell), [wallCells]);
+  const interiorWallCells = useMemo(
+    () => wallCells.filter(isOfficeDeskCell),
+    [wallCells]
+  );
   const deskLayout = useMemo(() => createOfficeDeskLayout(interiorWallCells), [interiorWallCells]);
   const desks = deskLayout.desks;
   const dividerCells = deskLayout.dividerCells;
   const deskChairSpots = useMemo(() => desks.flatMap(officeDeskChairSpots), [desks]);
+  const meetingTables = useMemo(() => createOfficeMeetingTables(), []);
+  const meetingChairSpots = useMemo(() => createOfficeMeetingChairSpots(), []);
+  const serverRackCells = useMemo(() => createOfficeServerRackCells(), []);
   const boxCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "box"), [destructibleCells]);
-  const chairCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "chair"), [destructibleCells]);
   const cabinetCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "cabinet"), [destructibleCells]);
+  const plantCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "plant"), [destructibleCells]);
+  const printerCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "printer"), [destructibleCells]);
+  const waterCoolerCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "water_cooler"), [destructibleCells]);
 
   useLayoutEffect(() => {
     const materials: StandardMaterial[] = [];
@@ -1653,6 +1662,8 @@ function OfficeStaticArenaLayer3D({
     };
     const carpetMaterial = registerMaterial("office-3d-carpet-material", materialLook("#3E5D57", "#081412", "#9CA3AF"));
     const corridorMaterial = registerMaterial("office-3d-corridor-material", materialLook("#6B7280", "#111827", "#D1D5DB"));
+    const meetingFloorMaterial = registerMaterial("office-3d-meeting-floor-material", materialLook("#46645F", "#081412", "#CBD5E1"));
+    const serverFloorMaterial = registerMaterial("office-3d-server-floor-material", materialLook("#2F3A46", "#0B1220", "#93C5FD"));
     const wallMaterial = registerMaterial("office-3d-wall-material", materialLook("#D7D6CF", "#1F2937", "#FFFFFF"));
     const glassMaterial = registerMaterial("office-3d-glass-material", materialLook("#A7F3FF", "#164E63", "#FFFFFF", 0.42));
     const trimMaterial = registerMaterial("office-3d-trim-material", materialLook("#475569", "#111827", "#E5E7EB"));
@@ -1662,9 +1673,14 @@ function OfficeStaticArenaLayer3D({
     const screenMaterial = registerMaterial("office-3d-screen-material", materialLook("#38BDF8", "#0E7490", "#E0F2FE"));
     const chairMaterial = registerMaterial("office-3d-desk-chair-material", materialLook("#2563EB", "#0F172A", "#BFDBFE"));
     const chairLegMaterial = registerMaterial("office-3d-desk-chair-leg-material", materialLook("#1F2937", "#020617", "#CBD5E1"));
+    const meetingTableMaterial = registerMaterial("office-3d-meeting-table-material", materialLook("#6B4C34", "#160E08", "#FED7AA"));
+    const serverRackMaterial = registerMaterial("office-3d-server-rack-material", materialLook("#1F2937", "#020617", "#CBD5E1"));
+    const serverLightMaterial = registerMaterial("office-3d-server-light-material", materialLook("#38BDF8", "#0E7490", "#E0F2FE"));
 
     const corridorCells = floorCells.filter(officeFloorIsCorridor);
-    const carpetCells = floorCells.filter(cell => !officeFloorIsCorridor(cell));
+    const meetingFloorCells = floorCells.filter(officeFloorIsMeetingRoom);
+    const serverFloorCells = floorCells.filter(officeFloorIsServerRoom);
+    const carpetCells = floorCells.filter(cell => !officeFloorIsCorridor(cell) && !officeFloorIsMeetingRoom(cell) && !officeFloorIsServerRoom(cell));
     const meshes = [
       createMergedPrimitiveGroup(scene, {
         name: "office-3d-carpet",
@@ -1675,6 +1691,28 @@ function OfficeStaticArenaLayer3D({
             width: 0.96,
             height: 0.14,
             depth: 0.96
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-meeting-floor",
+        cells: meetingFloorCells,
+        material: meetingFloorMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-meeting-floor-source-${index}`, cellPosition(cell.x, cell.z, -0.06), {
+            width: 0.98,
+            height: 0.15,
+            depth: 0.98
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-server-floor",
+        cells: serverFloorCells,
+        material: serverFloorMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-server-floor-source-${index}`, cellPosition(cell.x, cell.z, -0.055), {
+            width: 0.98,
+            height: 0.16,
+            depth: 0.98
           })
       }),
       createMergedPrimitiveGroup(scene, {
@@ -1690,7 +1728,7 @@ function OfficeStaticArenaLayer3D({
       }),
       createMergedPrimitiveGroup(scene, {
         name: "office-3d-perimeter-wall",
-        cells: perimeterWallCells,
+        cells: [...perimeterWallCells, ...structuralWallCells],
         material: wallMaterial,
         createMesh: (cell, index) =>
           createSourceBox(scene, `office-3d-perimeter-wall-source-${index}`, cellPosition(cell.x, cell.z, 0.55), {
@@ -1799,13 +1837,57 @@ function OfficeStaticArenaLayer3D({
             height: 0.12,
             depth: 0.3
           })
-      })
+      }),
+      createMergedOfficeDeskGroup(scene, {
+        name: "office-3d-meeting-table",
+        desks: meetingTables,
+        material: meetingTableMaterial,
+        createMesh: (desk, index) =>
+          createSourceBox(scene, `office-3d-meeting-table-source-${index}`, cellPosition(desk.x, desk.z, 0.44), {
+            width: 4.8,
+            height: 0.14,
+            depth: 0.72
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-meeting-chair-seat",
+        cells: meetingChairSpots,
+        material: chairMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-meeting-chair-seat-source-${index}`, cellPosition(cell.x, cell.z, 0.28), {
+            width: 0.42,
+            height: 0.14,
+            depth: 0.42
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-server-rack",
+        cells: serverRackCells,
+        material: serverRackMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-server-rack-source-${index}`, cellPosition(cell.x, cell.z, 0.62), {
+            width: 0.58,
+            height: 1.26,
+            depth: 0.62
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-server-rack-light",
+        cells: serverRackCells,
+        material: serverLightMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-server-rack-light-source-${index}`, cellPosition(cell.x, cell.z - 0.32, 0.82), {
+            width: 0.34,
+            height: 0.08,
+            depth: 0.04
+          })
+      }),
     ].filter((mesh): mesh is Mesh => mesh !== null);
 
     return () => {
       disposeMergedLayer(meshes, materials);
     };
-  }, [deskChairSpots, desks, dividerCells, floorCells, perimeterWallCells, scene]);
+  }, [deskChairSpots, desks, dividerCells, floorCells, meetingChairSpots, meetingTables, perimeterWallCells, scene, serverRackCells, structuralWallCells]);
 
   useLayoutEffect(() => {
     const materials: StandardMaterial[] = [];
@@ -1816,10 +1898,14 @@ function OfficeStaticArenaLayer3D({
     };
     const boxMaterial = registerMaterial("office-3d-moving-box-material", materialLook("#A16207", "#2B1706", "#FDE68A"));
     const tapeMaterial = registerMaterial("office-3d-packing-tape-material", materialLook("#FDE68A", "#3B2605", "#FFF7ED"));
-    const chairMaterial = registerMaterial("office-3d-chair-material", materialLook("#2563EB", "#0F172A", "#BFDBFE"));
-    const chairLegMaterial = registerMaterial("office-3d-chair-leg-material", materialLook("#1F2937", "#020617", "#CBD5E1"));
     const cabinetMaterial = registerMaterial("office-3d-cabinet-material", materialLook("#64748B", "#111827", "#E2E8F0"));
     const handleMaterial = registerMaterial("office-3d-cabinet-handle-material", materialLook("#E5E7EB", "#111827", "#FFFFFF"));
+    const plantPotMaterial = registerMaterial("office-3d-destructible-plant-pot-material", materialLook("#A16207", "#2B1706", "#FDE68A"));
+    const plantLeafMaterial = registerMaterial("office-3d-destructible-plant-leaf-material", materialLook("#22C55E", "#064E3B", "#BBF7D0"));
+    const printerMaterial = registerMaterial("office-3d-printer-material", materialLook("#CBD5E1", "#111827", "#FFFFFF"));
+    const printerPanelMaterial = registerMaterial("office-3d-printer-panel-material", materialLook("#111827", "#020617", "#94A3B8"));
+    const coolerBaseMaterial = registerMaterial("office-3d-water-cooler-base-material", materialLook("#E5E7EB", "#111827", "#FFFFFF"));
+    const coolerBottleMaterial = registerMaterial("office-3d-water-cooler-bottle-material", materialLook("#7DD3FC", "#0E7490", "#ECFEFF", 0.72));
     const meshes = [
       createMergedPrimitiveGroup(scene, {
         name: "office-3d-moving-box",
@@ -1841,39 +1927,6 @@ function OfficeStaticArenaLayer3D({
             width: 0.12,
             height: 0.035,
             depth: 0.76
-          })
-      }),
-      createMergedPrimitiveGroup(scene, {
-        name: "office-3d-chair-seat",
-        cells: chairCells,
-        material: chairMaterial,
-        createMesh: (cell, index) =>
-          createSourceBox(scene, `office-3d-chair-seat-source-${index}`, cellPosition(cell.x, cell.z, 0.32), {
-            width: 0.62,
-            height: 0.16,
-            depth: 0.62
-          })
-      }),
-      createMergedPrimitiveGroup(scene, {
-        name: "office-3d-chair-back",
-        cells: chairCells,
-        material: chairMaterial,
-        createMesh: (cell, index) =>
-          createSourceBox(scene, `office-3d-chair-back-source-${index}`, cellPosition(cell.x, cell.z + 0.27, 0.62), {
-            width: 0.62,
-            height: 0.56,
-            depth: 0.1
-          })
-      }),
-      createMergedPrimitiveGroup(scene, {
-        name: "office-3d-chair-base",
-        cells: chairCells,
-        material: chairLegMaterial,
-        createMesh: (cell, index) =>
-          createSourceBox(scene, `office-3d-chair-base-source-${index}`, cellPosition(cell.x, cell.z, 0.16), {
-            width: 0.42,
-            height: 0.16,
-            depth: 0.42
           })
       }),
       createMergedPrimitiveGroup(scene, {
@@ -1908,13 +1961,79 @@ function OfficeStaticArenaLayer3D({
             height: 0.04,
             depth: 0.035
           })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-destructible-plant-pot",
+        cells: plantCells,
+        material: plantPotMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-destructible-plant-pot-source-${index}`, cellPosition(cell.x, cell.z, 0.18), {
+            width: 0.36,
+            height: 0.34,
+            depth: 0.36
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-destructible-plant-leaf",
+        cells: plantCells,
+        material: plantLeafMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-destructible-plant-leaf-source-${index}`, cellPosition(cell.x, cell.z, 0.52), {
+            width: 0.58,
+            height: 0.42,
+            depth: 0.58
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-printer",
+        cells: printerCells,
+        material: printerMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-printer-source-${index}`, cellPosition(cell.x, cell.z, 0.32), {
+            width: 0.74,
+            height: 0.46,
+            depth: 0.62
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-printer-panel",
+        cells: printerCells,
+        material: printerPanelMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-printer-panel-source-${index}`, cellPosition(cell.x, cell.z - 0.33, 0.48), {
+            width: 0.42,
+            height: 0.08,
+            depth: 0.04
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-water-cooler-base",
+        cells: waterCoolerCells,
+        material: coolerBaseMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-water-cooler-base-source-${index}`, cellPosition(cell.x, cell.z, 0.34), {
+            width: 0.42,
+            height: 0.68,
+            depth: 0.42
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-water-cooler-bottle",
+        cells: waterCoolerCells,
+        material: coolerBottleMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-water-cooler-bottle-source-${index}`, cellPosition(cell.x, cell.z, 0.82), {
+            width: 0.32,
+            height: 0.36,
+            depth: 0.32
+          })
       })
     ].filter((mesh): mesh is Mesh => mesh !== null);
 
     return () => {
       disposeMergedLayer(meshes, materials);
     };
-  }, [boxCells, cabinetCells, chairCells, scene]);
+  }, [boxCells, cabinetCells, plantCells, printerCells, scene, waterCoolerCells]);
 
   return null;
 }
@@ -2107,27 +2226,41 @@ function TopDownOfficeStaticArenaLayer({
 }) {
   const scene = useScene();
   const perimeterWallCells = useMemo(() => wallCells.filter(isPerimeterWallCell), [wallCells]);
-  const interiorWallCells = useMemo(() => wallCells.filter(cell => !isPerimeterWallCell(cell)), [wallCells]);
+  const structuralWallCells = useMemo(() => wallCells.filter(isOfficeStructuralWallCell), [wallCells]);
+  const interiorWallCells = useMemo(
+    () => wallCells.filter(isOfficeDeskCell),
+    [wallCells]
+  );
   const deskLayout = useMemo(() => createOfficeDeskLayout(interiorWallCells), [interiorWallCells]);
   const desks = deskLayout.desks;
   const dividerCells = deskLayout.dividerCells;
   const deskChairSpots = useMemo(() => desks.flatMap(officeDeskChairSpots), [desks]);
+  const meetingTables = useMemo(() => createOfficeMeetingTables(), []);
+  const meetingChairSpots = useMemo(() => createOfficeMeetingChairSpots(), []);
+  const serverRackCells = useMemo(() => createOfficeServerRackCells(), []);
   const boxCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "box"), [destructibleCells]);
-  const chairCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "chair"), [destructibleCells]);
   const cabinetCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "cabinet"), [destructibleCells]);
+  const plantCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "plant"), [destructibleCells]);
+  const printerCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "printer"), [destructibleCells]);
+  const waterCoolerCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "water_cooler"), [destructibleCells]);
 
   useLayoutEffect(() => {
     const carpetMaterial = createTopDownStaticMaterial(scene, "topdown-office-carpet-material", "#3E5D57");
     const corridorMaterial = createTopDownStaticMaterial(scene, "topdown-office-corridor-material", "#737B86");
+    const meetingFloorMaterial = createTopDownStaticMaterial(scene, "topdown-office-meeting-floor-material", "#46645F");
+    const serverFloorMaterial = createTopDownStaticMaterial(scene, "topdown-office-server-floor-material", "#2F3A46");
     const wallMaterial = createTopDownStaticMaterial(scene, "topdown-office-wall-material", "#D7D6CF");
     const glassMaterial = createTopDownStaticMaterial(scene, "topdown-office-glass-material", "#8BD3E6", 0.72);
     const deskMaterial = createTopDownStaticMaterial(scene, "topdown-office-desk-material", "#7C5A3D");
     const screenMaterial = createTopDownStaticMaterial(scene, "topdown-office-screen-material", "#38BDF8");
     const chairMaterial = createTopDownStaticMaterial(scene, "topdown-office-desk-chair-material", "#2563EB");
     const outlineMaterial = createTopDownStaticMaterial(scene, "topdown-office-outline-material", "#172033");
+    const serverRackMaterial = createTopDownStaticMaterial(scene, "topdown-office-server-rack-material", "#1F2937");
 
     const corridorCells = floorCells.filter(officeFloorIsCorridor);
-    const carpetCells = floorCells.filter(cell => !officeFloorIsCorridor(cell));
+    const meetingFloorCells = floorCells.filter(officeFloorIsMeetingRoom);
+    const serverFloorCells = floorCells.filter(officeFloorIsServerRoom);
+    const carpetCells = floorCells.filter(cell => !officeFloorIsCorridor(cell) && !officeFloorIsMeetingRoom(cell) && !officeFloorIsServerRoom(cell));
     const meshes = [
       createMergedTopDownBoxes(scene, {
         name: "topdown-office-carpet",
@@ -2135,6 +2268,20 @@ function TopDownOfficeStaticArenaLayer({
         material: carpetMaterial,
         options: { width: 1, height: 0.08, depth: 1 },
         position: cell => cellPosition(cell.x, cell.z, -0.055)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-meeting-floor",
+        cells: meetingFloorCells,
+        material: meetingFloorMaterial,
+        options: { width: 1, height: 0.08, depth: 1 },
+        position: cell => cellPosition(cell.x, cell.z, -0.052)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-server-floor",
+        cells: serverFloorCells,
+        material: serverFloorMaterial,
+        options: { width: 1, height: 0.08, depth: 1 },
+        position: cell => cellPosition(cell.x, cell.z, -0.051)
       }),
       createMergedTopDownBoxes(scene, {
         name: "topdown-office-corridor",
@@ -2145,14 +2292,14 @@ function TopDownOfficeStaticArenaLayer({
       }),
       createMergedTopDownBoxes(scene, {
         name: "topdown-office-perimeter-outline",
-        cells: perimeterWallCells,
+        cells: [...perimeterWallCells, ...structuralWallCells],
         material: outlineMaterial,
         options: { width: 0.94, height: 0.08, depth: 0.94 },
         position: cell => cellPosition(cell.x, cell.z, 0.045)
       }),
       createMergedTopDownBoxes(scene, {
         name: "topdown-office-perimeter-wall",
-        cells: perimeterWallCells,
+        cells: [...perimeterWallCells, ...structuralWallCells],
         material: wallMaterial,
         options: { width: 0.84, height: 0.1, depth: 0.84 },
         position: cell => cellPosition(cell.x, cell.z, 0.09)
@@ -2192,22 +2339,71 @@ function TopDownOfficeStaticArenaLayer({
         material: chairMaterial,
         options: { width: 0.42, height: 0.08, depth: 0.42 },
         position: cell => cellPosition(cell.x, cell.z, 0.14)
-      })
+      }),
+      createMergedTopDownOfficeDesks(scene, {
+        name: "topdown-office-meeting-table",
+        desks: meetingTables,
+        material: deskMaterial,
+        createMesh: (desk, index) =>
+          createSourceBox(scene, `topdown-office-meeting-table-source-${index}`, cellPosition(desk.x, desk.z, 0.11), {
+            width: 4.8,
+            height: 0.1,
+            depth: 0.72
+          })
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-meeting-chair",
+        cells: meetingChairSpots,
+        material: chairMaterial,
+        options: { width: 0.42, height: 0.08, depth: 0.42 },
+        position: cell => cellPosition(cell.x, cell.z, 0.14)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-server-rack",
+        cells: serverRackCells,
+        material: serverRackMaterial,
+        options: { width: 0.62, height: 0.1, depth: 0.68 },
+        position: cell => cellPosition(cell.x, cell.z, 0.12)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-server-rack-light",
+        cells: serverRackCells,
+        material: screenMaterial,
+        options: { width: 0.38, height: 0.04, depth: 0.08 },
+        position: cell => cellPosition(cell.x, cell.z - 0.24, 0.18)
+      }),
     ].filter((mesh): mesh is Mesh => mesh !== null);
-    const materials = [carpetMaterial, corridorMaterial, wallMaterial, glassMaterial, deskMaterial, screenMaterial, chairMaterial, outlineMaterial];
+    const materials = [
+      carpetMaterial,
+      corridorMaterial,
+      meetingFloorMaterial,
+      serverFloorMaterial,
+      wallMaterial,
+      glassMaterial,
+      deskMaterial,
+      screenMaterial,
+      chairMaterial,
+      outlineMaterial,
+      serverRackMaterial
+    ];
 
     return () => {
       disposeTopDownMergedLayer(meshes, materials);
     };
-  }, [deskChairSpots, desks, dividerCells, floorCells, perimeterWallCells, scene]);
+  }, [deskChairSpots, desks, dividerCells, floorCells, meetingChairSpots, meetingTables, perimeterWallCells, scene, serverRackCells, structuralWallCells]);
 
   useLayoutEffect(() => {
     const outlineMaterial = createTopDownStaticMaterial(scene, "topdown-office-object-outline-material", "#172033");
     const boxMaterial = createTopDownStaticMaterial(scene, "topdown-office-box-material", "#A16207");
     const tapeMaterial = createTopDownStaticMaterial(scene, "topdown-office-tape-material", "#FDE68A");
-    const chairMaterial = createTopDownStaticMaterial(scene, "topdown-office-chair-material", "#2563EB");
     const cabinetMaterial = createTopDownStaticMaterial(scene, "topdown-office-cabinet-material", "#64748B");
     const handleMaterial = createTopDownStaticMaterial(scene, "topdown-office-handle-material", "#E5E7EB");
+    const plantPotMaterial = createTopDownStaticMaterial(scene, "topdown-office-destructible-plant-pot-material", "#A16207");
+    const plantLeafMaterial = createTopDownStaticMaterial(scene, "topdown-office-destructible-plant-leaf-material", "#22C55E");
+    const printerMaterial = createTopDownStaticMaterial(scene, "topdown-office-printer-material", "#CBD5E1");
+    const printerPanelMaterial = createTopDownStaticMaterial(scene, "topdown-office-printer-panel-material", "#111827");
+    const coolerMaterial = createTopDownStaticMaterial(scene, "topdown-office-water-cooler-material", "#E5E7EB");
+    const waterMaterial = createTopDownStaticMaterial(scene, "topdown-office-water-bottle-material", "#7DD3FC", 0.82);
 
     const meshes = [
       createMergedTopDownBoxes(scene, {
@@ -2232,20 +2428,6 @@ function TopDownOfficeStaticArenaLayer({
         position: cell => cellPosition(cell.x, cell.z, 0.17)
       }),
       createMergedTopDownBoxes(scene, {
-        name: "topdown-office-chair-seat",
-        cells: chairCells,
-        material: chairMaterial,
-        options: { width: 0.58, height: 0.1, depth: 0.48 },
-        position: cell => cellPosition(cell.x, cell.z + 0.08, 0.1)
-      }),
-      createMergedTopDownBoxes(scene, {
-        name: "topdown-office-chair-back",
-        cells: chairCells,
-        material: chairMaterial,
-        options: { width: 0.58, height: 0.04, depth: 0.12 },
-        position: cell => cellPosition(cell.x, cell.z - 0.25, 0.17)
-      }),
-      createMergedTopDownBoxes(scene, {
         name: "topdown-office-cabinet",
         cells: cabinetCells,
         material: cabinetMaterial,
@@ -2258,14 +2440,68 @@ function TopDownOfficeStaticArenaLayer({
         material: handleMaterial,
         options: { width: 0.28, height: 0.04, depth: 0.06 },
         position: cell => cellPosition(cell.x, cell.z - 0.2, 0.17)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-destructible-plant-pot",
+        cells: plantCells,
+        material: plantPotMaterial,
+        options: { width: 0.34, height: 0.08, depth: 0.34 },
+        position: cell => cellPosition(cell.x, cell.z, 0.12)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-destructible-plant-leaf",
+        cells: plantCells,
+        material: plantLeafMaterial,
+        options: { width: 0.5, height: 0.06, depth: 0.5 },
+        position: cell => cellPosition(cell.x, cell.z, 0.18)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-printer",
+        cells: printerCells,
+        material: printerMaterial,
+        options: { width: 0.7, height: 0.1, depth: 0.58 },
+        position: cell => cellPosition(cell.x, cell.z, 0.12)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-printer-panel",
+        cells: printerCells,
+        material: printerPanelMaterial,
+        options: { width: 0.38, height: 0.04, depth: 0.08 },
+        position: cell => cellPosition(cell.x, cell.z - 0.22, 0.18)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-water-cooler",
+        cells: waterCoolerCells,
+        material: coolerMaterial,
+        options: { width: 0.38, height: 0.08, depth: 0.38 },
+        position: cell => cellPosition(cell.x, cell.z, 0.12)
+      }),
+      createMergedTopDownBoxes(scene, {
+        name: "topdown-office-water-bottle",
+        cells: waterCoolerCells,
+        material: waterMaterial,
+        options: { width: 0.28, height: 0.06, depth: 0.28 },
+        position: cell => cellPosition(cell.x, cell.z, 0.18)
       })
     ].filter((mesh): mesh is Mesh => mesh !== null);
-    const materials = [outlineMaterial, boxMaterial, tapeMaterial, chairMaterial, cabinetMaterial, handleMaterial];
+    const materials = [
+      outlineMaterial,
+      boxMaterial,
+      tapeMaterial,
+      cabinetMaterial,
+      handleMaterial,
+      plantPotMaterial,
+      plantLeafMaterial,
+      printerMaterial,
+      printerPanelMaterial,
+      coolerMaterial,
+      waterMaterial
+    ];
 
     return () => {
       disposeTopDownMergedLayer(meshes, materials);
     };
-  }, [boxCells, cabinetCells, chairCells, destructibleCells, scene]);
+  }, [boxCells, cabinetCells, destructibleCells, plantCells, printerCells, scene, waterCoolerCells]);
 
   return null;
 }
@@ -4980,7 +5216,20 @@ function isPerimeterWallCell(cell: Cell) {
 }
 
 function officeFloorIsCorridor(cell: Cell) {
-  return cell.x === center || cell.z === center || (cell.x > center - 2 && cell.x < center + 2 && cell.z % 6 === 0);
+  return (
+    (cell.x >= center - 1 && cell.x <= center + 1) ||
+    cell.z === 6 ||
+    cell.z === 12 ||
+    cell.z === 18
+  );
+}
+
+function officeFloorIsMeetingRoom(cell: Cell) {
+  return cell.x >= 13 && cell.x <= 21 && cell.z >= 1 && cell.z <= 5;
+}
+
+function officeFloorIsServerRoom(cell: Cell) {
+  return cell.x >= 1 && cell.x <= 9 && cell.z >= 1 && cell.z <= 5;
 }
 
 function createOfficeDeskLayout(cells: Cell[]): OfficeDeskLayout {
@@ -5022,15 +5271,115 @@ function createOfficeDeskLayout(cells: Cell[]): OfficeDeskLayout {
 
 function officeDeskChairSpots(desk: OfficeDesk): Cell[] {
   if (desk.horizontal) {
+    const chairZ = desk.z <= 3 ? desk.z - 0.72 : desk.z + 0.72;
     return [
-      { x: desk.x - 0.5, z: desk.z + 0.72 },
-      { x: desk.x + 0.5, z: desk.z + 0.72 }
+      { x: desk.x - 0.5, z: chairZ },
+      { x: desk.x + 0.5, z: chairZ }
     ];
   }
 
+  const chairX = officeDeskChairSideX(desk);
   return [
-    { x: desk.x + 0.72, z: desk.z - 0.5 },
-    { x: desk.x + 0.72, z: desk.z + 0.5 }
+    { x: chairX, z: desk.z - 0.5 },
+    { x: chairX, z: desk.z + 0.5 }
+  ];
+}
+
+function officeDeskChairSideX(desk: OfficeDesk) {
+  const leftFacingDeskColumns = new Set([3, 16]);
+  return desk.x + (leftFacingDeskColumns.has(Math.round(desk.x)) ? -0.72 : 0.72);
+}
+
+function createOfficeMeetingTables(): OfficeDesk[] {
+  return [{ id: "meeting-table", x: 17.5, z: 3.2, horizontal: true }];
+}
+
+function createOfficeMeetingChairSpots(): Cell[] {
+  return [
+    { x: 15.5, z: 2.55 },
+    { x: 17.5, z: 2.55 },
+    { x: 19.5, z: 2.55 },
+    { x: 15.5, z: 3.85 },
+    { x: 17.5, z: 3.85 },
+    { x: 19.5, z: 3.85 }
+  ];
+}
+
+function createOfficeServerRackCells(): Cell[] {
+  return [
+    { x: 3, z: 2 },
+    { x: 5, z: 2 },
+    { x: 7, z: 2 },
+    { x: 3, z: 4 },
+    { x: 5, z: 4 },
+    { x: 7, z: 4 }
+  ];
+}
+
+function createOfficePlantCells(): Cell[] {
+  return [
+    { x: 2, z: 2 },
+    { x: 8, z: 4 },
+    { x: 14, z: 4 },
+    { x: 20, z: 2 },
+    { x: 2, z: 7 },
+    { x: 20, z: 7 },
+    { x: 2, z: 13 },
+    { x: 20, z: 13 },
+    { x: 2, z: 19 },
+    { x: 20, z: 19 }
+  ];
+}
+
+function createOfficePrinterCells(): Cell[] {
+  return [
+    { x: 8, z: 8 },
+    { x: 14, z: 8 },
+    { x: 8, z: 14 },
+    { x: 14, z: 14 },
+    { x: 8, z: 20 },
+    { x: 14, z: 20 }
+  ];
+}
+
+function createOfficeWaterCoolerCells(): Cell[] {
+  return [
+    { x: 3, z: 7 },
+    { x: 19, z: 7 },
+    { x: 3, z: 13 },
+    { x: 19, z: 13 },
+    { x: 7, z: 20 },
+    { x: 15, z: 20 }
+  ];
+}
+
+function createOfficeBoxCells(): Cell[] {
+  return [
+    { x: 4, z: 8 },
+    { x: 7, z: 8 },
+    { x: 15, z: 8 },
+    { x: 20, z: 8 },
+    { x: 2, z: 14 },
+    { x: 7, z: 14 },
+    { x: 15, z: 14 },
+    { x: 20, z: 14 },
+    { x: 4, z: 20 },
+    { x: 18, z: 20 }
+  ];
+}
+
+function createOfficeCabinetCells(): Cell[] {
+  return [
+    { x: 2, z: 9 },
+    { x: 8, z: 9 },
+    { x: 14, z: 9 },
+    { x: 20, z: 9 },
+    { x: 2, z: 15 },
+    { x: 8, z: 15 },
+    { x: 14, z: 15 },
+    { x: 20, z: 15 },
+    { x: 8, z: 19 },
+    { x: 14, z: 19 }
   ];
 }
 
@@ -5039,13 +5388,31 @@ function officeDeskMonitorPosition(desk: OfficeDesk, y: number, frontOffset: num
   return cellPosition(desk.x + (desk.horizontal ? 0 : -distance), desk.z + (desk.horizontal ? -distance : 0), y);
 }
 
-function officeDestructibleKind(cell: Cell): "box" | "chair" | "cabinet" {
-  const variant = Math.abs(cell.x * 13 + cell.z * 17 + cell.x * cell.z) % 3;
-  if (variant === 0) {
-    return "box";
+function officeDestructibleKind(cell: Cell): "box" | "cabinet" | "plant" | "printer" | "water_cooler" {
+  const seed = officeCellSeed(cell);
+  if (officeFloorIsCorridor(cell)) {
+    return seed % 5 === 0 ? "water_cooler" : "plant";
   }
 
-  return variant === 1 ? "chair" : "cabinet";
+  switch (seed % 8) {
+    case 0:
+    case 1:
+      return "plant";
+    case 2:
+    case 3:
+      return "box";
+    case 4:
+    case 5:
+      return "cabinet";
+    case 6:
+      return "printer";
+    default:
+      return "water_cooler";
+  }
+}
+
+function officeCellSeed(cell: Cell) {
+  return Math.abs(cell.x * 37 + cell.z * 53 + cell.x * cell.z * 11 + cell.x * cell.x * 7 + cell.z * cell.z * 3);
 }
 
 function officeCellRotation(cell: Cell) {
@@ -5168,7 +5535,11 @@ function createFloorCells(): Cell[] {
   return cells;
 }
 
-function createGeneratedLevel(): GeneratedLevel {
+function createGeneratedLevel(worldSkin: WorldSkin): GeneratedLevel {
+  if (worldSkin === "office") {
+    return createOfficeGeneratedLevel();
+  }
+
   const baseSeed = Math.floor((Date.now() + Math.random() * 0xffffffff) % 0xffffffff);
   const maxAttempts = 80;
 
@@ -5211,6 +5582,187 @@ function createGeneratedLevel(): GeneratedLevel {
     destructibleCells,
     enemies: createInitialEnemies(wallSet, destructibleSet, fallbackRng)
   };
+}
+
+function createOfficeGeneratedLevel(): GeneratedLevel {
+  const rng = createSeededRandom(Math.floor((Date.now() + Math.random() * 0xffffffff) % 0xffffffff));
+  const wallCells = createOfficeWallCells();
+  const wallSet = toCellSet(wallCells);
+  const destructibleCells = createOfficeDestructibleCells(wallSet, rng);
+  const destructibleSet = toCellSet(destructibleCells);
+
+  return {
+    wallCells,
+    destructibleCells,
+    enemies: createInitialEnemies(wallSet, destructibleSet, rng)
+  };
+}
+
+function createOfficeWallCells(): Cell[] {
+  const wallSet = new Set<string>();
+
+  for (let x = 0; x < size; x += 1) {
+    for (let z = 0; z < size; z += 1) {
+      if (x === 0 || z === 0 || x === size - 1 || z === size - 1) {
+        wallSet.add(cellKey({ x, z }));
+      }
+    }
+  }
+
+  const addDeskPair = (a: Cell, b: Cell) => {
+    wallSet.add(cellKey(a));
+    wallSet.add(cellKey(b));
+  };
+
+  for (const cell of createOfficeStructuralWallCells()) {
+    wallSet.add(cellKey(cell));
+  }
+  for (const cell of createOfficeServerRackCells()) {
+    wallSet.add(cellKey(cell));
+  }
+  for (const cell of createOfficeMeetingBlockingCells()) {
+    wallSet.add(cellKey(cell));
+  }
+
+  for (const [a, b] of createOfficeDeskPairs()) {
+    addDeskPair(a, b);
+  }
+  for (const cell of createOfficeDeskChairBlockingCells()) {
+    wallSet.add(cellKey(cell));
+  }
+
+  return sortedCellsFromSet(wallSet);
+}
+
+function createOfficeDestructibleCells(wallSet: Set<string>, rng: () => number): Cell[] {
+  const reservedDoorCells = new Set(
+    [
+      ...[3, 8, 14, 20].flatMap(z => [
+        { x: 10, z },
+        { x: 11, z },
+        { x: 12, z }
+      ]),
+      ...[6, 12, 18].flatMap(z => [
+        { x: 5, z },
+        { x: 11, z },
+        { x: 17, z }
+      ])
+    ].map(cellKey)
+  );
+  const corridorCandidates = createInteriorCells().filter(cell => {
+    const key = cellKey(cell);
+    return officeFloorIsCorridor(cell) && !wallSet.has(key) && !reservedDoorCells.has(key) && !isSpawnSafeCell(cell);
+  });
+  const roomCandidates = createInteriorCells().filter(cell => {
+    const key = cellKey(cell);
+    return !officeFloorIsCorridor(cell) && !wallSet.has(key) && !reservedDoorCells.has(key) && !isSpawnSafeCell(cell);
+  });
+  const candidateCells = [
+    ...shuffleCells(corridorCandidates, rng).slice(0, 9),
+    ...shuffleCells(roomCandidates, rng).slice(0, 18)
+  ];
+  const destructibleSet = new Set<string>();
+
+  for (const cell of candidateCells) {
+    const key = cellKey(cell);
+    if (wallSet.has(key) || isSpawnSafeCell(cell)) {
+      continue;
+    }
+
+    destructibleSet.add(key);
+    if (!isPassableAreaConnected(wallSet, destructibleSet)) {
+      destructibleSet.delete(key);
+    }
+  }
+
+  return sortedCellsFromSet(destructibleSet);
+}
+
+function createOfficeMeetingBlockingCells(): Cell[] {
+  return [
+    { x: 16, z: 3 },
+    { x: 17, z: 3 },
+    { x: 18, z: 3 },
+    { x: 19, z: 3 },
+    { x: 15, z: 2 },
+    { x: 17, z: 2 },
+    { x: 19, z: 2 }
+  ];
+}
+
+function createOfficeStructuralWallCells(): Cell[] {
+  const wallSet = new Set<string>();
+  const add = (cell: Cell) => {
+    if (cell.x > 0 && cell.x < size - 1 && cell.z > 0 && cell.z < size - 1) {
+      wallSet.add(cellKey(cell));
+    }
+  };
+  const doorwayRows = new Set([3, 8, 14, 20]);
+
+  for (let z = 1; z < size - 1; z += 1) {
+    if (!doorwayRows.has(z) && z !== 6 && z !== 12 && z !== 18) {
+      add({ x: 9, z });
+      add({ x: 13, z });
+    }
+  }
+
+  for (const z of [5, 11, 17]) {
+    for (let x = 1; x < size - 1; x += 1) {
+      if ([5, 9, 10, 11, 12, 13, 17].includes(x)) {
+        continue;
+      }
+      add({ x, z });
+    }
+  }
+
+  return sortedCellsFromSet(wallSet);
+}
+
+function createOfficeDeskPairs(): Array<[Cell, Cell]> {
+  return [
+    [{ x: 3, z: 8 }, { x: 3, z: 9 }],
+    [{ x: 6, z: 8 }, { x: 6, z: 9 }],
+    [{ x: 16, z: 8 }, { x: 16, z: 9 }],
+    [{ x: 19, z: 8 }, { x: 19, z: 9 }],
+    [{ x: 3, z: 14 }, { x: 3, z: 15 }],
+    [{ x: 6, z: 14 }, { x: 6, z: 15 }],
+    [{ x: 16, z: 14 }, { x: 16, z: 15 }],
+    [{ x: 19, z: 14 }, { x: 19, z: 15 }],
+    [{ x: 3, z: 20 }, { x: 3, z: 21 }],
+    [{ x: 6, z: 20 }, { x: 6, z: 21 }],
+    [{ x: 16, z: 20 }, { x: 16, z: 21 }],
+    [{ x: 19, z: 20 }, { x: 19, z: 21 }]
+  ];
+}
+
+function createOfficeDeskChairBlockingCells(): Cell[] {
+  const chairCells = new Set<string>();
+
+  for (const [a, b] of createOfficeDeskPairs()) {
+    const desk: OfficeDesk = {
+      id: `${a.x}-${a.z}-${b.x}-${b.z}`,
+      x: (a.x + b.x) / 2,
+      z: (a.z + b.z) / 2,
+      horizontal: a.z === b.z
+    };
+
+    for (const chairSpot of officeDeskChairSpots(desk)) {
+      const chairCell = { x: Math.round(chairSpot.x), z: Math.round(chairSpot.z) };
+      if (chairCell.x > 0 && chairCell.x < size - 1 && chairCell.z > 0 && chairCell.z < size - 1) {
+        chairCells.add(cellKey(chairCell));
+      }
+    }
+  }
+
+  return sortedCellsFromSet(chairCells);
+}
+
+function isOfficeDeskCell(cell: Cell) {
+  return createOfficeDeskPairs().some(([a, b]) => sameCell(a, cell) || sameCell(b, cell));
+}
+
+function isOfficeStructuralWallCell(cell: Cell) {
+  return createOfficeStructuralWallCells().some(wallCell => sameCell(wallCell, cell));
 }
 
 function createRandomWallCells(rng: () => number, density: number): Cell[] {
