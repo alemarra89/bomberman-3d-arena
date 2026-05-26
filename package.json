@@ -17,6 +17,7 @@
   "dependencies": {
     "@babylonjs/core": "^8.36.0",
     "@babylonjs/gui": "^8.36.0",
+    "@babylonjs/loaders": "^8.56.2",
     "@vitejs/plugin-react": "^5.1.1",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",

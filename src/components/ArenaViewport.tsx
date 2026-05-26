@@ -45,6 +45,9 @@ export function ArenaViewport({ arena, isApplying, viewMode, worldSkin }: ArenaV
     });
     setSessionId(currentSessionId => currentSessionId + 1);
   }, []);
+  const updateHud = useCallback((nextHud: ArenaHudState) => {
+    setHud(currentHud => (sameHudState(currentHud, nextHud) ? currentHud : nextHud));
+  }, []);
 
   return (
     <section className={`arena-stage ${viewMode === "top_down" ? "top-down" : ""}`}>
@@ -53,7 +56,7 @@ export function ArenaViewport({ arena, isApplying, viewMode, worldSkin }: ArenaV
         sessionId={sessionId}
         viewMode={viewMode}
         worldSkin={worldSkin}
-        onHudChange={setHud}
+        onHudChange={updateHud}
         onRestart={restartGame}
       />
       <ArenaHud hud={hud} />
@@ -68,6 +71,21 @@ export function ArenaViewport({ arena, isApplying, viewMode, worldSkin }: ArenaV
         <span>{arena.overlay}</span>
       </div>
     </section>
+  );
+}
+
+function sameHudState(a: ArenaHudState, b: ArenaHudState) {
+  return (
+    a.elapsedSeconds === b.elapsedSeconds &&
+    a.availableBombs === b.availableBombs &&
+    a.bombCapacity === b.bombCapacity &&
+    a.blastRadius === b.blastRadius &&
+    a.collectedPowerUps === b.collectedPowerUps &&
+    a.enemiesRemaining === b.enemiesRemaining &&
+    a.speedLevel === b.speedLevel &&
+    a.canKickBombs === b.canKickBombs &&
+    a.controllerName === b.controllerName &&
+    a.status === b.status
   );
 }
 

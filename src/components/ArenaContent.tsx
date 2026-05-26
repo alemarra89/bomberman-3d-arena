@@ -1,6 +1,19 @@
-import { Camera, Color3, Color4, GlowLayer, Mesh, MeshBuilder, StandardMaterial, Tools, Vector3 } from "@babylonjs/core";
+import {
+  Camera,
+  Color3,
+  Color4,
+  GlowLayer,
+  Mesh,
+  MeshBuilder,
+  SceneLoader,
+  StandardMaterial,
+  Tools,
+  TransformNode,
+  Vector3
+} from "@babylonjs/core";
 import type { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
 import { Scene as BabylonScene } from "@babylonjs/core/scene";
+import "@babylonjs/loaders/glTF";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useScene } from "reactylon";
 import {
@@ -143,6 +156,7 @@ const enableGamepadInput = true;
 const enableCameraFollow = true;
 const enableEnemies = true;
 const enableHudClock = true;
+let sharedAudioContext: AudioContext | null = null;
 
 export function ArenaContent({ arena, viewMode, worldSkin, visualStyle, onHudChange, onRestart }: ArenaContentProps) {
   const scene = useScene();
@@ -181,6 +195,8 @@ export function ArenaContent({ arena, viewMode, worldSkin, visualStyle, onHudCha
   const bombCellSetRef = useRef<Set<string>>(new Set());
   const playerPassableBombCellKeysRef = useRef<Set<string>>(new Set());
   const bombTimerIdsRef = useRef<Map<number, number>>(new Map());
+  const feedbackFrameIdsRef = useRef<number[]>([]);
+  const bombCapacityRef = useRef(initialBombCapacity);
   const bombsRef = useRef<ActiveBomb[]>([]);
   const blastsRef = useRef<ActiveBlast[]>([]);
   const blastRadiusRef = useRef(initialBlastRadius);
@@ -247,6 +263,10 @@ export function ArenaContent({ arena, viewMode, worldSkin, visualStyle, onHudCha
         window.clearTimeout(timerId);
       }
       bombTimerIdsRef.current.clear();
+      for (const frameId of feedbackFrameIdsRef.current) {
+        window.cancelAnimationFrame(frameId);
+      }
+      feedbackFrameIdsRef.current = [];
     },
     []
   );
@@ -487,7 +507,7 @@ export function ArenaContent({ arena, viewMode, worldSkin, visualStyle, onHudCha
       return;
     }
 
-    if (bombsRef.current.length >= bombCapacity) {
+    if (bombsRef.current.length >= bombCapacityRef.current) {
       return;
     }
 
@@ -512,7 +532,7 @@ export function ArenaContent({ arena, viewMode, worldSkin, visualStyle, onHudCha
     setBombs(nextBombs);
 
     scheduleBombExplosion(activeBomb);
-  }, [bombCapacity, scheduleBombExplosion]);
+  }, [scheduleBombExplosion]);
 
   const relocateBomb = useCallback(
     (bombToMove: ActiveBomb, destination: Cell) => {
@@ -569,12 +589,19 @@ export function ArenaContent({ arena, viewMode, worldSkin, visualStyle, onHudCha
     powerUpsRef.current = nextPowerUps;
     setPowerUps(nextPowerUps);
     setCollectedPowerUps(currentCount => currentCount + 1);
-    emitFeedback([{ kind: "pickup", cell }], setFeedbackCues);
-    playGameTone("pickup");
+    const feedbackFrameId = window.requestAnimationFrame(() => {
+      feedbackFrameIdsRef.current = feedbackFrameIdsRef.current.filter(id => id !== feedbackFrameId);
+      emitFeedback([{ kind: "pickup", cell }], setFeedbackCues);
+      playGameTone("pickup");
+    });
+    feedbackFrameIdsRef.current.push(feedbackFrameId);
 
     switch (collectedPowerUp.type) {
       case "bomb_capacity":
-        setBombCapacity(currentCapacity => currentCapacity + 1);
+        bombCapacityRef.current += 1;
+        scheduleNextFrame(feedbackFrameIdsRef, () => {
+          setBombCapacity(bombCapacityRef.current);
+        });
         break;
       case "blast_radius":
         setBlastRadius(currentRadius => currentRadius + 1);
@@ -1137,6 +1164,7 @@ export function ArenaContent({ arena, viewMode, worldSkin, visualStyle, onHudCha
         <Player
           arena={arena}
           isTopDown={isTopDown}
+          worldSkin={worldSkin}
           visualStyle={visualStyle}
           visualPositionRef={playerVisualPositionRef}
           lastDirectionRef={lastPlayerDirectionRef}
@@ -1204,25 +1232,34 @@ interface TopDownVisualPalette {
   ghost: string;
 }
 
-type TopDownMergedBoxSpec = {
+type TopDownMergedBoxSpec<TCell extends Cell = Cell> = {
   name: string;
-  cells: Cell[];
+  cells: TCell[];
   material: StandardMaterial;
   options: { width: number; height: number; depth: number };
-  position: (cell: Cell) => Vector3;
+  position: (cell: TCell) => Vector3;
 };
 
-type MergedPrimitiveSpec = {
+type MergedPrimitiveSpec<TCell extends Cell = Cell> = {
   name: string;
-  cells: Cell[];
+  cells: TCell[];
   material: StandardMaterial;
-  createMesh: (cell: Cell, index: number) => Mesh;
+  createMesh: (cell: TCell, index: number) => Mesh;
 };
 
 interface OfficeDesk {
   id: string;
   x: number;
   z: number;
+  horizontal: boolean;
+}
+
+interface OfficeDeskChairSpot extends Cell {
+  facingX: number;
+  facingZ: number;
+}
+
+interface OfficeDeskMonitorSpot extends Cell {
   horizontal: boolean;
 }
 
@@ -1643,9 +1680,19 @@ function OfficeStaticArenaLayer3D({
   const deskLayout = useMemo(() => createOfficeDeskLayout(interiorWallCells), [interiorWallCells]);
   const desks = deskLayout.desks;
   const dividerCells = deskLayout.dividerCells;
+  const deskMonitorSpots = useMemo(() => desks.flatMap(desk => officeDeskMonitorSpots(desk, 0)), [desks]);
+  const deskScreenSpots = useMemo(() => desks.flatMap(desk => officeDeskMonitorSpots(desk, -0.045)), [desks]);
   const deskChairSpots = useMemo(() => desks.flatMap(officeDeskChairSpots), [desks]);
+  const activeDeskChairSpots = useMemo(
+    () => filterActiveOfficeDeskChairSpots(deskChairSpots, destructibleCells),
+    [deskChairSpots, destructibleCells]
+  );
   const meetingTables = useMemo(() => createOfficeMeetingTables(), []);
   const meetingChairSpots = useMemo(() => createOfficeMeetingChairSpots(), []);
+  const activeMeetingChairSpots = useMemo(
+    () => filterActiveOfficeDeskChairSpots(meetingChairSpots, destructibleCells),
+    [meetingChairSpots, destructibleCells]
+  );
   const boxCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "box"), [destructibleCells]);
   const cabinetCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "cabinet"), [destructibleCells]);
   const plantCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "plant"), [destructibleCells]);
@@ -1781,59 +1828,59 @@ function OfficeStaticArenaLayer3D({
             depth: desk.horizontal ? 0.16 : 1.56
           })
       }),
-      createMergedOfficeDeskGroup(scene, {
+      createMergedPrimitiveGroup(scene, {
         name: "office-3d-monitor",
-        desks,
+        cells: deskMonitorSpots,
         material: monitorMaterial,
-        createMesh: (desk, index) =>
-          createSourceBox(scene, `office-3d-monitor-source-${index}`, officeDeskMonitorPosition(desk, 0.74, 0), {
+        createMesh: (spot, index) =>
+          createSourceBox(scene, `office-3d-monitor-source-${index}`, cellPosition(spot.x, spot.z, 0.74), {
             width: 0.38,
             height: 0.34,
             depth: 0.08
-          }, { rotationY: desk.horizontal ? 0 : Tools.ToRadians(90) })
+          }, { rotationY: spot.horizontal ? 0 : Tools.ToRadians(90) })
       }),
-      createMergedOfficeDeskGroup(scene, {
+      createMergedPrimitiveGroup(scene, {
         name: "office-3d-monitor-screen",
-        desks,
+        cells: deskScreenSpots,
         material: screenMaterial,
-        createMesh: (desk, index) =>
-          createSourceBox(scene, `office-3d-monitor-screen-source-${index}`, officeDeskMonitorPosition(desk, 0.74, -0.045), {
+        createMesh: (spot, index) =>
+          createSourceBox(scene, `office-3d-monitor-screen-source-${index}`, cellPosition(spot.x, spot.z, 0.74), {
             width: 0.28,
             height: 0.22,
             depth: 0.025
-          }, { rotationY: desk.horizontal ? 0 : Tools.ToRadians(90) })
+          }, { rotationY: spot.horizontal ? 0 : Tools.ToRadians(90) })
       }),
       createMergedPrimitiveGroup(scene, {
         name: "office-3d-desk-chair-seat",
-        cells: deskChairSpots,
+        cells: activeDeskChairSpots,
         material: chairMaterial,
         createMesh: (cell, index) =>
-          createSourceBox(scene, `office-3d-desk-chair-seat-source-${index}`, cellPosition(cell.x, cell.z, 0.28), {
-            width: 0.46,
+          createSourceBox(scene, `office-3d-desk-chair-seat-source-${index}`, officeDeskChairVisualPosition(cell, 0.28), {
+            width: 0.62,
             height: 0.14,
-            depth: 0.46
-          }, { rotationY: officeCellRotation(cell) ? Tools.ToRadians(90) : 0 })
+            depth: 0.62
+          }, { rotationY: cell.facingX !== 0 ? Tools.ToRadians(90) : 0 })
       }),
       createMergedPrimitiveGroup(scene, {
         name: "office-3d-desk-chair-back",
-        cells: deskChairSpots,
+        cells: activeDeskChairSpots,
         material: chairMaterial,
         createMesh: (cell, index) =>
-          createSourceBox(scene, `office-3d-desk-chair-back-source-${index}`, cellPosition(cell.x, cell.z + 0.2, 0.55), {
-            width: 0.46,
+          createSourceBox(scene, `office-3d-desk-chair-back-source-${index}`, officeDeskChairVisualPosition(cell, 0.55, -0.2), {
+            width: cell.facingX !== 0 ? 0.1 : 0.62,
             height: 0.5,
-            depth: 0.08
+            depth: cell.facingX !== 0 ? 0.62 : 0.1
           })
       }),
       createMergedPrimitiveGroup(scene, {
         name: "office-3d-desk-chair-base",
-        cells: deskChairSpots,
+        cells: activeDeskChairSpots,
         material: chairLegMaterial,
         createMesh: (cell, index) =>
-          createSourceBox(scene, `office-3d-desk-chair-base-source-${index}`, cellPosition(cell.x, cell.z, 0.13), {
-            width: 0.3,
+          createSourceBox(scene, `office-3d-desk-chair-base-source-${index}`, officeDeskChairVisualPosition(cell, 0.13), {
+            width: 0.42,
             height: 0.12,
-            depth: 0.3
+            depth: 0.42
           })
       }),
       createMergedOfficeDeskGroup(scene, {
@@ -1842,19 +1889,41 @@ function OfficeStaticArenaLayer3D({
         material: meetingTableMaterial,
         createMesh: (desk, index) =>
           createSourceBox(scene, `office-3d-meeting-table-source-${index}`, cellPosition(desk.x, desk.z, 0.44), {
-            width: 4.8,
+            width: 3.86,
             height: 0.14,
-            depth: 0.72
+            depth: 0.68
           })
       }),
       createMergedPrimitiveGroup(scene, {
         name: "office-3d-meeting-chair-seat",
-        cells: meetingChairSpots,
+        cells: activeMeetingChairSpots,
         material: chairMaterial,
         createMesh: (cell, index) =>
           createSourceBox(scene, `office-3d-meeting-chair-seat-source-${index}`, cellPosition(cell.x, cell.z, 0.28), {
-            width: 0.42,
+            width: 0.62,
             height: 0.14,
+            depth: 0.62
+          }, { rotationY: cell.facingX !== 0 ? Tools.ToRadians(90) : 0 })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-meeting-chair-back",
+        cells: activeMeetingChairSpots,
+        material: chairMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-meeting-chair-back-source-${index}`, cellPosition(cell.x - cell.facingX * 0.2, cell.z - cell.facingZ * 0.2, 0.55), {
+            width: cell.facingX !== 0 ? 0.1 : 0.62,
+            height: 0.5,
+            depth: cell.facingX !== 0 ? 0.62 : 0.1
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-meeting-chair-base",
+        cells: activeMeetingChairSpots,
+        material: chairLegMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-meeting-chair-base-source-${index}`, cellPosition(cell.x, cell.z, 0.13), {
+            width: 0.42,
+            height: 0.12,
             depth: 0.42
           })
       }),
@@ -1863,7 +1932,7 @@ function OfficeStaticArenaLayer3D({
     return () => {
       disposeMergedLayer(meshes, materials);
     };
-  }, [deskChairSpots, desks, dividerCells, floorCells, meetingChairSpots, meetingTables, perimeterWallCells, scene, structuralWallCells]);
+  }, [activeDeskChairSpots, activeMeetingChairSpots, deskMonitorSpots, deskScreenSpots, desks, dividerCells, floorCells, meetingTables, perimeterWallCells, scene, structuralWallCells]);
 
   useLayoutEffect(() => {
     const materials: StandardMaterial[] = [];
@@ -1876,12 +1945,17 @@ function OfficeStaticArenaLayer3D({
     const tapeMaterial = registerMaterial("office-3d-packing-tape-material", materialLook("#FDE68A", "#3B2605", "#FFF7ED"));
     const cabinetMaterial = registerMaterial("office-3d-cabinet-material", materialLook("#64748B", "#111827", "#E2E8F0"));
     const handleMaterial = registerMaterial("office-3d-cabinet-handle-material", materialLook("#E5E7EB", "#111827", "#FFFFFF"));
-    const plantPotMaterial = registerMaterial("office-3d-destructible-plant-pot-material", materialLook("#A16207", "#2B1706", "#FDE68A"));
+    const plantPotMaterial = registerMaterial("office-3d-destructible-plant-pot-material", materialLook("#92400E", "#2B1706", "#FDE68A"));
+    const plantStemMaterial = registerMaterial("office-3d-destructible-plant-stem-material", materialLook("#166534", "#052E16", "#BBF7D0"));
     const plantLeafMaterial = registerMaterial("office-3d-destructible-plant-leaf-material", materialLook("#22C55E", "#064E3B", "#BBF7D0"));
+    const plantDarkLeafMaterial = registerMaterial("office-3d-destructible-plant-dark-leaf-material", materialLook("#16A34A", "#052E16", "#DCFCE7"));
     const printerMaterial = registerMaterial("office-3d-printer-material", materialLook("#CBD5E1", "#111827", "#FFFFFF"));
     const printerPanelMaterial = registerMaterial("office-3d-printer-panel-material", materialLook("#111827", "#020617", "#94A3B8"));
     const coolerBaseMaterial = registerMaterial("office-3d-water-cooler-base-material", materialLook("#E5E7EB", "#111827", "#FFFFFF"));
+    const coolerPanelMaterial = registerMaterial("office-3d-water-cooler-panel-material", materialLook("#0F172A", "#020617", "#BAE6FD"));
     const coolerBottleMaterial = registerMaterial("office-3d-water-cooler-bottle-material", materialLook("#7DD3FC", "#0E7490", "#ECFEFF", 0.72));
+    const coolerWaterMaterial = registerMaterial("office-3d-water-cooler-water-material", materialLook("#38BDF8", "#075985", "#ECFEFF", 0.58));
+    const coolerCupMaterial = registerMaterial("office-3d-water-cooler-cup-material", materialLook("#F8FAFC", "#64748B", "#FFFFFF"));
     const serverRackMaterial = registerMaterial("office-3d-destructible-server-rack-material", materialLook("#1F2937", "#020617", "#CBD5E1"));
     const serverLightMaterial = registerMaterial("office-3d-destructible-server-light-material", materialLook("#38BDF8", "#0E7490", "#E0F2FE"));
     const meshes = [
@@ -1945,22 +2019,66 @@ function OfficeStaticArenaLayer3D({
         cells: plantCells,
         material: plantPotMaterial,
         createMesh: (cell, index) =>
-          createSourceBox(scene, `office-3d-destructible-plant-pot-source-${index}`, cellPosition(cell.x, cell.z, 0.18), {
-            width: 0.36,
+          createSourceCylinder(scene, `office-3d-destructible-plant-pot-source-${index}`, cellPosition(cell.x, cell.z, 0.18), {
             height: 0.34,
-            depth: 0.36
+            diameter: 0.42,
+            tessellation: 12
           })
       }),
       createMergedPrimitiveGroup(scene, {
-        name: "office-3d-destructible-plant-leaf",
+        name: "office-3d-destructible-plant-stem",
+        cells: plantCells,
+        material: plantStemMaterial,
+        createMesh: (cell, index) =>
+          createSourceCylinder(scene, `office-3d-destructible-plant-stem-source-${index}`, cellPosition(cell.x, cell.z, 0.48), {
+            height: 0.42,
+            diameter: 0.08,
+            tessellation: 8
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-destructible-plant-leaf-low-a",
         cells: plantCells,
         material: plantLeafMaterial,
         createMesh: (cell, index) =>
-          createSourceBox(scene, `office-3d-destructible-plant-leaf-source-${index}`, cellPosition(cell.x, cell.z, 0.52), {
+          createSourceBox(scene, `office-3d-destructible-plant-leaf-low-a-source-${index}`, cellPosition(cell.x, cell.z, 0.52), {
+            width: 0.72,
+            height: 0.12,
+            depth: 0.22
+          }, { rotationY: Tools.ToRadians(18) })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-destructible-plant-leaf-low-b",
+        cells: plantCells,
+        material: plantDarkLeafMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-destructible-plant-leaf-low-b-source-${index}`, cellPosition(cell.x, cell.z, 0.58), {
+            width: 0.22,
+            height: 0.12,
+            depth: 0.72
+          }, { rotationY: Tools.ToRadians(-18) })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-destructible-plant-leaf-high-a",
+        cells: plantCells,
+        material: plantLeafMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-destructible-plant-leaf-high-a-source-${index}`, cellPosition(cell.x, cell.z, 0.82), {
             width: 0.58,
-            height: 0.42,
+            height: 0.12,
+            depth: 0.18
+          }, { rotationY: Tools.ToRadians(75) })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-destructible-plant-leaf-high-b",
+        cells: plantCells,
+        material: plantDarkLeafMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-destructible-plant-leaf-high-b-source-${index}`, cellPosition(cell.x, cell.z, 0.88), {
+            width: 0.18,
+            height: 0.12,
             depth: 0.58
-          })
+          }, { rotationY: Tools.ToRadians(35) })
       }),
       createMergedPrimitiveGroup(scene, {
         name: "office-3d-printer",
@@ -1989,10 +2107,32 @@ function OfficeStaticArenaLayer3D({
         cells: waterCoolerCells,
         material: coolerBaseMaterial,
         createMesh: (cell, index) =>
-          createSourceBox(scene, `office-3d-water-cooler-base-source-${index}`, cellPosition(cell.x, cell.z, 0.34), {
-            width: 0.42,
-            height: 0.68,
+          createSourceBox(scene, `office-3d-water-cooler-base-source-${index}`, cellPosition(cell.x, cell.z, 0.36), {
+            width: 0.46,
+            height: 0.72,
             depth: 0.42
+          }, { rotationY: officeFacingRotationY(officeObjectFacingDirection(cell)) })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-water-cooler-panel",
+        cells: waterCoolerCells,
+        material: coolerPanelMaterial,
+        createMesh: (cell, index) =>
+          createSourceBox(scene, `office-3d-water-cooler-panel-source-${index}`, officeFacingPosition(cell, 0.43, 0.225), {
+            width: 0.3,
+            height: 0.18,
+            depth: 0.035
+          }, { rotationY: officeFacingRotationY(officeObjectFacingDirection(cell)) })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-water-cooler-cup",
+        cells: waterCoolerCells,
+        material: coolerCupMaterial,
+        createMesh: (cell, index) =>
+          createSourceCylinder(scene, `office-3d-water-cooler-cup-source-${index}`, officeFacingSidePosition(cell, 0.67, 0.16, 0.18), {
+            height: 0.16,
+            diameter: 0.12,
+            tessellation: 12
           })
       }),
       createMergedPrimitiveGroup(scene, {
@@ -2000,10 +2140,31 @@ function OfficeStaticArenaLayer3D({
         cells: waterCoolerCells,
         material: coolerBottleMaterial,
         createMesh: (cell, index) =>
-          createSourceBox(scene, `office-3d-water-cooler-bottle-source-${index}`, cellPosition(cell.x, cell.z, 0.82), {
-            width: 0.32,
-            height: 0.36,
-            depth: 0.32
+          createSourceCylinder(scene, `office-3d-water-cooler-bottle-source-${index}`, cellPosition(cell.x, cell.z, 0.82), {
+            height: 0.38,
+            diameter: 0.34,
+            tessellation: 18
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-water-cooler-water-core",
+        cells: waterCoolerCells,
+        material: coolerWaterMaterial,
+        createMesh: (cell, index) =>
+          createSourceCylinder(scene, `office-3d-water-cooler-water-core-source-${index}`, cellPosition(cell.x, cell.z, 0.78), {
+            height: 0.26,
+            diameter: 0.26,
+            tessellation: 18
+          })
+      }),
+      createMergedPrimitiveGroup(scene, {
+        name: "office-3d-water-cooler-bottle-cap",
+        cells: waterCoolerCells,
+        material: coolerBottleMaterial,
+        createMesh: (cell, index) =>
+          createSourceSphere(scene, `office-3d-water-cooler-bottle-cap-source-${index}`, cellPosition(cell.x, cell.z, 1.03), {
+            diameter: 0.27,
+            segments: 16
           })
       }),
       createMergedPrimitiveGroup(scene, {
@@ -2234,9 +2395,18 @@ function TopDownOfficeStaticArenaLayer({
   const deskLayout = useMemo(() => createOfficeDeskLayout(interiorWallCells), [interiorWallCells]);
   const desks = deskLayout.desks;
   const dividerCells = deskLayout.dividerCells;
+  const deskMonitorSpots = useMemo(() => desks.flatMap(desk => officeDeskMonitorSpots(desk, 0)), [desks]);
   const deskChairSpots = useMemo(() => desks.flatMap(officeDeskChairSpots), [desks]);
+  const activeDeskChairSpots = useMemo(
+    () => filterActiveOfficeDeskChairSpots(deskChairSpots, destructibleCells),
+    [deskChairSpots, destructibleCells]
+  );
   const meetingTables = useMemo(() => createOfficeMeetingTables(), []);
   const meetingChairSpots = useMemo(() => createOfficeMeetingChairSpots(), []);
+  const activeMeetingChairSpots = useMemo(
+    () => filterActiveOfficeDeskChairSpots(meetingChairSpots, destructibleCells),
+    [meetingChairSpots, destructibleCells]
+  );
   const boxCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "box"), [destructibleCells]);
   const cabinetCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "cabinet"), [destructibleCells]);
   const plantCells = useMemo(() => destructibleCells.filter(cell => officeDestructibleKind(cell) === "plant"), [destructibleCells]);
@@ -2321,23 +2491,23 @@ function TopDownOfficeStaticArenaLayer({
             depth: desk.horizontal ? 0.68 : 1.86
           })
       }),
-      createMergedTopDownOfficeDesks(scene, {
+      createMergedPrimitiveGroup(scene, {
         name: "topdown-office-monitor",
-        desks,
+        cells: deskMonitorSpots,
         material: screenMaterial,
-        createMesh: (desk, index) =>
-          createSourceBox(scene, `topdown-office-monitor-source-${index}`, officeDeskMonitorPosition(desk, 0.17, 0), {
+        createMesh: (spot, index) =>
+          createSourceBox(scene, `topdown-office-monitor-source-${index}`, cellPosition(spot.x, spot.z, 0.17), {
             width: 0.34,
             height: 0.04,
             depth: 0.12
-          }, { rotationY: desk.horizontal ? 0 : Tools.ToRadians(90) })
+          }, { rotationY: spot.horizontal ? 0 : Tools.ToRadians(90) })
       }),
       createMergedTopDownBoxes(scene, {
         name: "topdown-office-desk-chair",
-        cells: deskChairSpots,
+        cells: activeDeskChairSpots,
         material: chairMaterial,
-        options: { width: 0.42, height: 0.08, depth: 0.42 },
-        position: cell => cellPosition(cell.x, cell.z, 0.14)
+        options: { width: 0.58, height: 0.08, depth: 0.58 },
+        position: cell => officeDeskChairVisualPosition(cell, 0.14)
       }),
       createMergedTopDownOfficeDesks(scene, {
         name: "topdown-office-meeting-table",
@@ -2345,16 +2515,16 @@ function TopDownOfficeStaticArenaLayer({
         material: deskMaterial,
         createMesh: (desk, index) =>
           createSourceBox(scene, `topdown-office-meeting-table-source-${index}`, cellPosition(desk.x, desk.z, 0.11), {
-            width: 4.8,
+            width: 3.86,
             height: 0.1,
-            depth: 0.72
+            depth: 0.68
           })
       }),
       createMergedTopDownBoxes(scene, {
         name: "topdown-office-meeting-chair",
-        cells: meetingChairSpots,
+        cells: activeMeetingChairSpots,
         material: chairMaterial,
-        options: { width: 0.42, height: 0.08, depth: 0.42 },
+        options: { width: 0.58, height: 0.08, depth: 0.58 },
         position: cell => cellPosition(cell.x, cell.z, 0.14)
       }),
     ].filter((mesh): mesh is Mesh => mesh !== null);
@@ -2374,7 +2544,7 @@ function TopDownOfficeStaticArenaLayer({
     return () => {
       disposeTopDownMergedLayer(meshes, materials);
     };
-  }, [deskChairSpots, desks, dividerCells, floorCells, meetingChairSpots, meetingTables, perimeterWallCells, scene, structuralWallCells]);
+  }, [activeDeskChairSpots, activeMeetingChairSpots, deskMonitorSpots, desks, dividerCells, floorCells, meetingTables, perimeterWallCells, scene, structuralWallCells]);
 
   useLayoutEffect(() => {
     const outlineMaterial = createTopDownStaticMaterial(scene, "topdown-office-object-outline-material", "#172033");
@@ -2533,7 +2703,7 @@ function createStaticMaterialFromLook(scene: BabylonScene, name: string, look: M
   return material;
 }
 
-function createMergedTopDownBoxes(scene: BabylonScene, spec: TopDownMergedBoxSpec) {
+function createMergedTopDownBoxes<TCell extends Cell>(scene: BabylonScene, spec: TopDownMergedBoxSpec<TCell>) {
   if (spec.cells.length === 0) {
     return null;
   }
@@ -2556,7 +2726,7 @@ function createMergedTopDownBoxes(scene: BabylonScene, spec: TopDownMergedBoxSpe
   return mergedMesh;
 }
 
-function createMergedPrimitiveGroup(scene: BabylonScene, spec: MergedPrimitiveSpec) {
+function createMergedPrimitiveGroup<TCell extends Cell>(scene: BabylonScene, spec: MergedPrimitiveSpec<TCell>) {
   if (spec.cells.length === 0) {
     return null;
   }
@@ -3674,12 +3844,14 @@ function useSceneRuntime(scene: BabylonScene, arena: ArenaState, isTopDown: bool
 function Player({
   arena,
   isTopDown,
+  worldSkin,
   visualStyle,
   visualPositionRef,
   lastDirectionRef
 }: {
   arena: ArenaState;
   isTopDown: boolean;
+  worldSkin: WorldSkin;
   visualStyle: VisualStyle;
   visualPositionRef: { current: Vector3 };
   lastDirectionRef: { current: Cell };
@@ -3688,8 +3860,13 @@ function Player({
   const bodyPositionRef = useRef(visualPositionRef.current.clone());
   const headPositionRef = useRef(visualPositionRef.current.add(new Vector3(0, 0.42, 0)));
   const facingYawRef = useRef(0);
+  const usesOfficeModel = worldSkin === "office" && !isTopDown;
 
   useEffect(() => {
+    if (usesOfficeModel) {
+      return;
+    }
+
     const body = scene.getMeshByName("player-body");
     const head = scene.getMeshByName("player-head");
     if (!body || !head) {
@@ -3721,16 +3898,6 @@ function Player({
       positionPlayerPart(scene, "player-backpack", bodyPosition, new Vector3(0, 0.02, 0.24), yaw);
       positionPlayerPart(scene, "player-belt", bodyPosition, new Vector3(0, 0.03, -0.34), yaw);
       positionPlayerDetail(scene, "player-ground-shadow", new Vector3(bodyPosition.x, 0.024, bodyPosition.z + 0.05));
-      positionPlayerDetail(scene, "player-locator-ring", new Vector3(bodyPosition.x, 0.085, bodyPosition.z));
-      positionPlayerDetail(scene, "player-locator-arrow", new Vector3(bodyPosition.x, 1.55, bodyPosition.z));
-      positionPlayerDetail(scene, "player-locator-arrow-stem", new Vector3(bodyPosition.x, 1.8, bodyPosition.z));
-      positionPlayerDetail(scene, "player-topdown-base", new Vector3(bodyPosition.x, 0.075, bodyPosition.z));
-      positionPlayerDetail(scene, "player-topdown-ring", new Vector3(bodyPosition.x, 0.11, bodyPosition.z));
-      const pointer = scene.getMeshByName("player-topdown-pointer");
-      if (pointer) {
-        pointer.position.copyFrom(playerTopDownPointerPosition(bodyPosition, lastDirectionRef.current));
-        pointer.rotation.y = directionYaw(lastDirectionRef.current);
-      }
       bodyPositionRef.current.copyFrom(body.position);
       headPositionRef.current.copyFrom(head.position);
     });
@@ -3738,7 +3905,11 @@ function Player({
     return () => {
       scene.onBeforeRenderObservable.remove(observer);
     };
-  }, [lastDirectionRef, scene, visualPositionRef]);
+  }, [lastDirectionRef, scene, usesOfficeModel, visualPositionRef]);
+
+  if (usesOfficeModel) {
+    return <OfficePlayerModel visualPositionRef={visualPositionRef} lastDirectionRef={lastDirectionRef} />;
+  }
 
   return (
     <>
@@ -3766,12 +3937,121 @@ function Player({
           specularColor={Color3.FromHexString(isTopDown ? "#000000" : "#FFFFFF")}
         />
       </sphere>
-      {isTopDown ? (
-        <PlayerTopDownMarker arena={arena} position={visualPositionRef.current} direction={lastDirectionRef.current} />
-      ) : null}
       <PlayerDetails arena={arena} isTopDown={isTopDown} visualStyle={visualStyle} position={visualPositionRef.current} />
     </>
   );
+}
+
+function OfficePlayerModel({
+  visualPositionRef,
+  lastDirectionRef
+}: {
+  visualPositionRef: { current: Vector3 };
+  lastDirectionRef: { current: Cell };
+}) {
+  const scene = useScene();
+  const rootRef = useRef<TransformNode | null>(null);
+  const facingYawRef = useRef(0);
+  const walkPhaseRef = useRef(0);
+  const previousVisualPositionRef = useRef(visualPositionRef.current.clone());
+
+  useEffect(() => {
+    let isDisposed = false;
+    const root = new TransformNode("office-player-model-root", scene);
+    root.scaling.setAll(0.72);
+    root.position.copyFrom(officePlayerModelPosition(visualPositionRef.current));
+    rootRef.current = root;
+
+    SceneLoader.ImportMeshAsync("", "/models/", "meshy-ai-ather-player.glb", scene)
+      .then(result => {
+        if (isDisposed) {
+          result.meshes.forEach(mesh => mesh.dispose(false, true));
+          result.transformNodes.forEach(node => node.dispose(false, true));
+          return;
+        }
+
+        for (const mesh of result.meshes) {
+          mesh.isPickable = false;
+          if (!mesh.parent) {
+            mesh.parent = root;
+          }
+        }
+
+        for (const node of result.transformNodes) {
+          if (node !== root && !node.parent) {
+            node.parent = root;
+          }
+        }
+      })
+      .catch(error => {
+        console.error("Failed to load office player model", error);
+      });
+
+    const observer = scene.onBeforeRenderObservable.add(() => {
+      const currentRoot = rootRef.current;
+      if (!currentRoot) {
+        return;
+      }
+
+      const targetYaw = officePlayerModelYaw(lastDirectionRef.current);
+      const yaw = smoothAngle(facingYawRef.current, targetYaw, 0.22);
+      facingYawRef.current = yaw;
+
+      const currentPosition = visualPositionRef.current;
+      const previousPosition = previousVisualPositionRef.current;
+      const planarDistance = Math.hypot(currentPosition.x - previousPosition.x, currentPosition.z - previousPosition.z);
+      const isWalking = planarDistance > 0.0005;
+      if (isWalking) {
+        walkPhaseRef.current += planarDistance * 7;
+      } else {
+        walkPhaseRef.current *= 0.92;
+      }
+
+      const walkPhase = walkPhaseRef.current;
+      const bob = isWalking ? Math.abs(Math.sin(walkPhase)) * 0.018 : 0;
+      const sway = isWalking ? Math.sin(walkPhase) * 0.012 : 0;
+      const lean = isWalking ? Math.sin(walkPhase * 2) * 0.008 : 0;
+      const modelPosition = officePlayerModelPosition(currentPosition);
+
+      currentRoot.position.copyFrom(new Vector3(modelPosition.x, modelPosition.y + bob, modelPosition.z));
+      currentRoot.rotation.x = lean;
+      currentRoot.rotation.y = yaw;
+      currentRoot.rotation.z = sway;
+      positionPlayerDetail(scene, "office-player-ground-shadow", new Vector3(modelPosition.x, 0.024, modelPosition.z + 0.05));
+      previousVisualPositionRef.current.copyFrom(currentPosition);
+    });
+
+    return () => {
+      isDisposed = true;
+      scene.onBeforeRenderObservable.remove(observer);
+      root.dispose(false, true);
+      rootRef.current = null;
+    };
+  }, [lastDirectionRef, scene, visualPositionRef]);
+
+  const position = officePlayerModelPosition(visualPositionRef.current);
+
+  return (
+    <>
+      <cylinder
+        name="office-player-ground-shadow"
+        position={new Vector3(position.x, 0.024, position.z + 0.05)}
+        options={{ height: 0.018, diameter: 0.82, tessellation: 40 }}
+      >
+        <standardMaterial
+          name="office-player-ground-shadow-material"
+          diffuseColor={Color3.FromHexString("#020617")}
+          emissiveColor={Color3.FromHexString("#000000")}
+          specularColor={Color3.FromHexString("#000000")}
+          alpha={0.36}
+        />
+      </cylinder>
+    </>
+  );
+}
+
+function officePlayerModelPosition(position: Vector3) {
+  return new Vector3(position.x, 0.685, position.z);
 }
 
 function positionPlayerDetail(scene: BabylonScene, name: string, position: Vector3, rotationY?: number) {
@@ -3800,68 +4080,17 @@ function playerFacingYaw(direction: Cell) {
   return Math.atan2(direction.x, -direction.z);
 }
 
+function officePlayerModelYaw(direction: Cell) {
+  const yaw = playerFacingYaw(direction);
+  return direction.z !== 0 ? yaw + Math.PI : yaw;
+}
+
 function smoothAngle(current: number, target: number, factor: number) {
   return current + shortestAngleDelta(current, target) * factor;
 }
 
 function shortestAngleDelta(current: number, target: number) {
   return Math.atan2(Math.sin(target - current), Math.cos(target - current));
-}
-
-function PlayerTopDownMarker({
-  arena,
-  position,
-  direction
-}: {
-  arena: ArenaState;
-  position: Vector3;
-  direction: Cell;
-}) {
-  const accent = Color3.FromHexString(arena.palette.accent);
-
-  return (
-    <>
-      <box
-        name="player-topdown-base"
-        position={new Vector3(position.x, 0.075, position.z)}
-        rotationY={Tools.ToRadians(45)}
-        options={{ width: 0.76, height: 0.045, depth: 0.76 }}
-      >
-        <standardMaterial
-          name="player-topdown-base-material"
-          diffuseColor={accent}
-          emissiveColor={accent}
-          specularColor={Color3.FromHexString("#000000")}
-        />
-      </box>
-      <torus
-        name="player-topdown-ring"
-        position={new Vector3(position.x, 0.11, position.z)}
-        rotationX={Tools.ToRadians(90)}
-        options={{ diameter: 1, thickness: 0.1, tessellation: 48 }}
-      >
-        <standardMaterial
-          name="player-topdown-ring-material"
-          diffuseColor={Color3.FromHexString("#F8FAFC")}
-          emissiveColor={accent}
-          specularColor={Color3.FromHexString("#000000")}
-        />
-      </torus>
-      <box
-        name="player-topdown-pointer"
-        position={playerTopDownPointerPosition(position, direction)}
-        rotationY={directionYaw(direction)}
-        options={{ width: 0.22, height: 0.055, depth: 0.34 }}
-      >
-        <standardMaterial
-          name="player-topdown-pointer-material"
-          diffuseColor={accent}
-          emissiveColor={accent}
-          specularColor={Color3.FromHexString("#000000")}
-        />
-      </box>
-    </>
-  );
 }
 
 function ParticleMotes({ arena }: { arena: ArenaState }) {
@@ -3975,44 +4204,6 @@ function PlayerDetails({
               emissiveColor={Color3.FromHexString("#000000")}
               specularColor={Color3.FromHexString("#000000")}
               alpha={0.44}
-            />
-          </cylinder>
-          <torus
-            name="player-locator-ring"
-            position={new Vector3(position.x, 0.085, position.z)}
-            rotationX={Tools.ToRadians(90)}
-            options={{ diameter: 1.1, thickness: 0.055, tessellation: 56 }}
-          >
-            <standardMaterial
-              name="player-locator-ring-material"
-              diffuseColor={playerBlue}
-              emissiveColor={Color3.FromHexString("#1D4ED8")}
-              specularColor={white}
-              alpha={0.74}
-            />
-          </torus>
-          <cylinder
-            name="player-locator-arrow"
-            position={new Vector3(position.x, 1.55, position.z)}
-            options={{ height: 0.34, diameterTop: 0.42, diameterBottom: 0, tessellation: 4 }}
-          >
-            <standardMaterial
-              name="player-locator-arrow-material"
-              diffuseColor={Color3.FromHexString("#FDE047")}
-              emissiveColor={Color3.FromHexString("#A16207")}
-              specularColor={white}
-            />
-          </cylinder>
-          <cylinder
-            name="player-locator-arrow-stem"
-            position={new Vector3(position.x, 1.8, position.z)}
-            options={{ height: 0.24, diameter: 0.09, tessellation: 16 }}
-          >
-            <standardMaterial
-              name="player-locator-arrow-stem-material"
-              diffuseColor={Color3.FromHexString("#FDE047")}
-              emissiveColor={Color3.FromHexString("#A16207")}
-              specularColor={white}
             />
           </cylinder>
         </>
@@ -4413,7 +4604,7 @@ function FeedbackPulse({ cue, onComplete }: { cue: FeedbackCue; onComplete: () =
       name={`feedback-${cue.id}`}
       position={cellPosition(cue.cell.x, cue.cell.z, cue.kind === "pickup" ? 0.22 : 0.3)}
       rotationX={Tools.ToRadians(90)}
-      options={{ diameter: cue.kind === "pickup" ? 0.68 : 0.82, thickness: cue.kind === "pickup" ? 0.06 : 0.09, tessellation: 48 }}
+      options={{ diameter: cue.kind === "pickup" ? 0.68 : 0.82, thickness: cue.kind === "pickup" ? 0.06 : 0.09, tessellation: cue.kind === "pickup" ? 24 : 48 }}
     >
       <standardMaterial
         name={`feedback-material-${cue.id}`}
@@ -5234,6 +5425,101 @@ function officeFloorIsServerRoom(cell: Cell) {
   return cell.x >= 1 && cell.x <= 9 && cell.z >= 1 && cell.z <= 5;
 }
 
+function officeCellIsCorridorSide(cell: Cell) {
+  if (!officeFloorIsCorridor(cell)) {
+    return false;
+  }
+
+  if (officeCellIsNarrowPassage(cell)) {
+    return false;
+  }
+
+  return (
+    (cell.x >= center - 1 && cell.x <= center + 1 && cell.x !== center) ||
+    ([6, 12, 18].includes(cell.z) && ![5, center, 17].includes(cell.x))
+  );
+}
+
+function officeCellIsRoomEdge(cell: Cell) {
+  if (officeFloorIsCorridor(cell) || officeFloorIsServerRoom(cell)) {
+    return false;
+  }
+
+  const boundaryCells = new Set(
+    [
+      ...createOfficeStructuralWallCells(),
+      ...Array.from({ length: size }, (_, index) => [
+        { x: index, z: 0 },
+        { x: index, z: size - 1 },
+        { x: 0, z: index },
+        { x: size - 1, z: index }
+      ]).flat()
+    ].map(cellKey)
+  );
+
+  return cardinalDirections().some(direction => boundaryCells.has(cellKey({ x: cell.x + direction.x, z: cell.z + direction.z })));
+}
+
+function officeCellCanHostPlantOrWater(cell: Cell) {
+  return !officeFloorIsServerRoom(cell) && !officeCellIsNarrowPassage(cell) && (officeCellIsCorridorSide(cell) || officeCellIsRoomEdge(cell));
+}
+
+function createOfficeNarrowPassageCells(): Cell[] {
+  return [
+    ...[3, 8, 14, 20].flatMap(z => [
+      { x: 10, z },
+      { x: 11, z },
+      { x: 12, z }
+    ]),
+    ...[6, 12, 18].flatMap(z =>
+      [5, 11, 17].flatMap(x => [
+        { x: x - 1, z },
+        { x, z },
+        { x: x + 1, z }
+      ])
+    )
+  ];
+}
+
+function officeCellIsNarrowPassage(cell: Cell) {
+  return createOfficeNarrowPassageCells().some(passageCell => sameCell(passageCell, cell));
+}
+
+function officeObjectFacingDirection(cell: Cell): Cell {
+  if (cell.x >= center - 1 && cell.x <= center + 1) {
+    return { x: Math.sign(center - cell.x), z: 0 };
+  }
+
+  if ([6, 12, 18].includes(cell.z)) {
+    const roomCenterZ = cell.z <= 6 ? 3 : cell.z <= 12 ? 9 : 15;
+    return { x: 0, z: Math.sign(roomCenterZ - cell.z) };
+  }
+
+  const nearestBoundary = [
+    { direction: { x: 1, z: 0 }, distance: cell.x - 1 },
+    { direction: { x: -1, z: 0 }, distance: size - 2 - cell.x },
+    { direction: { x: 0, z: 1 }, distance: cell.z - 1 },
+    { direction: { x: 0, z: -1 }, distance: size - 2 - cell.z }
+  ].sort((a, b) => a.distance - b.distance)[0];
+
+  return nearestBoundary?.direction ?? { x: 0, z: -1 };
+}
+
+function officeFacingRotationY(direction: Cell) {
+  return Math.atan2(-direction.x, -direction.z);
+}
+
+function officeFacingPosition(cell: Cell, y: number, frontOffset: number) {
+  const direction = officeObjectFacingDirection(cell);
+  return cellPosition(cell.x + direction.x * frontOffset, cell.z + direction.z * frontOffset, y);
+}
+
+function officeFacingSidePosition(cell: Cell, y: number, frontOffset: number, sideOffset: number) {
+  const direction = officeObjectFacingDirection(cell);
+  const side = { x: -direction.z, z: direction.x };
+  return cellPosition(cell.x + direction.x * frontOffset + side.x * sideOffset, cell.z + direction.z * frontOffset + side.z * sideOffset, y);
+}
+
 function createOfficeDeskLayout(cells: Cell[]): OfficeDeskLayout {
   const remainingCells = new Map(cells.map(cell => [cellKey(cell), cell]));
   const desks: OfficeDesk[] = [];
@@ -5271,39 +5557,90 @@ function createOfficeDeskLayout(cells: Cell[]): OfficeDeskLayout {
   return { desks, dividerCells };
 }
 
-function officeDeskChairSpots(desk: OfficeDesk): Cell[] {
+function officeDeskChairSpots(desk: OfficeDesk): OfficeDeskChairSpot[] {
+  const side = officeDeskInteractionSide(desk);
+
   if (desk.horizontal) {
-    const chairZ = desk.z <= 3 ? desk.z - 0.72 : desk.z + 0.72;
+    const chairZ = desk.z + side.z * 0.72;
     return [
-      { x: desk.x - 0.5, z: chairZ },
-      { x: desk.x + 0.5, z: chairZ }
+      { x: desk.x - 0.5, z: chairZ, facingX: 0, facingZ: -side.z },
+      { x: desk.x + 0.5, z: chairZ, facingX: 0, facingZ: -side.z }
     ];
   }
 
-  const chairX = officeDeskChairSideX(desk);
+  const chairX = desk.x + side.x * 0.72;
   return [
-    { x: chairX, z: desk.z - 0.5 },
-    { x: chairX, z: desk.z + 0.5 }
+    { x: chairX, z: desk.z - 0.5, facingX: -side.x, facingZ: 0 },
+    { x: chairX, z: desk.z + 0.5, facingX: -side.x, facingZ: 0 }
   ];
 }
 
-function officeDeskChairSideX(desk: OfficeDesk) {
+function officeDeskInteractionSide(desk: OfficeDesk) {
+  if (desk.horizontal) {
+    return { x: 0, z: desk.z <= 3 ? -1 : 1 };
+  }
+
   const leftFacingDeskColumns = new Set([3, 16]);
-  return desk.x + (leftFacingDeskColumns.has(Math.round(desk.x)) ? -0.72 : 0.72);
+  return { x: leftFacingDeskColumns.has(Math.round(desk.x)) ? -1 : 1, z: 0 };
+}
+
+function officeDeskMonitorSpots(desk: OfficeDesk, frontOffset: number): OfficeDeskMonitorSpot[] {
+  const side = officeDeskInteractionSide(desk);
+  const distance = 0.13 - frontOffset;
+
+  if (desk.horizontal) {
+    const z = desk.z + side.z * distance;
+    return [
+      { x: desk.x - 0.5, z, horizontal: true },
+      { x: desk.x + 0.5, z, horizontal: true }
+    ];
+  }
+
+  const x = desk.x + side.x * distance;
+  return [
+    { x, z: desk.z - 0.5, horizontal: false },
+    { x, z: desk.z + 0.5, horizontal: false }
+  ];
+}
+
+function filterActiveOfficeDeskChairSpots(spots: OfficeDeskChairSpot[], destructibleCells: Cell[]) {
+  const activeKeys = new Set(destructibleCells.map(cellKey));
+  return spots.filter(spot => activeKeys.has(officeDeskChairBlockingCellKey(spot)));
+}
+
+function officeDeskChairBlockingCell(spot: Cell): Cell {
+  return { x: Math.round(spot.x), z: Math.round(spot.z) };
+}
+
+function officeDeskChairVisualPosition(spot: OfficeDeskChairSpot, y: number, facingOffset = 0) {
+  const cell = officeDeskChairBlockingCell(spot);
+  return cellPosition(cell.x + spot.facingX * facingOffset, cell.z + spot.facingZ * facingOffset, y);
+}
+
+function officeDeskChairBlockingCellKey(spot: Cell) {
+  return cellKey(officeDeskChairBlockingCell(spot));
+}
+
+function createOfficeMeetingChairBlockingCells(): Cell[] {
+  return createOfficeMeetingChairSpots().map(officeDeskChairBlockingCell);
 }
 
 function createOfficeMeetingTables(): OfficeDesk[] {
-  return [{ id: "meeting-table", x: 17.5, z: 3.2, horizontal: true }];
+  return [{ id: "meeting-table", x: 17.5, z: 3, horizontal: true }];
 }
 
-function createOfficeMeetingChairSpots(): Cell[] {
+function createOfficeMeetingChairSpots(): OfficeDeskChairSpot[] {
   return [
-    { x: 15.5, z: 2.55 },
-    { x: 17.5, z: 2.55 },
-    { x: 19.5, z: 2.55 },
-    { x: 15.5, z: 3.85 },
-    { x: 17.5, z: 3.85 },
-    { x: 19.5, z: 3.85 }
+    { x: 16, z: 2, facingX: 0, facingZ: 1 },
+    { x: 17, z: 2, facingX: 0, facingZ: 1 },
+    { x: 18, z: 2, facingX: 0, facingZ: 1 },
+    { x: 19, z: 2, facingX: 0, facingZ: 1 },
+    { x: 16, z: 4, facingX: 0, facingZ: -1 },
+    { x: 17, z: 4, facingX: 0, facingZ: -1 },
+    { x: 18, z: 4, facingX: 0, facingZ: -1 },
+    { x: 19, z: 4, facingX: 0, facingZ: -1 },
+    { x: 15, z: 3, facingX: 1, facingZ: 0 },
+    { x: 20, z: 3, facingX: -1, facingZ: 0 }
   ];
 }
 
@@ -5385,19 +5722,37 @@ function createOfficeCabinetCells(): Cell[] {
   ];
 }
 
-function officeDeskMonitorPosition(desk: OfficeDesk, y: number, frontOffset: number) {
-  const distance = 0.13 - frontOffset;
-  return cellPosition(desk.x + (desk.horizontal ? 0 : -distance), desk.z + (desk.horizontal ? -distance : 0), y);
-}
+function officeDestructibleKind(cell: Cell): "box" | "cabinet" | "plant" | "printer" | "water_cooler" | "server_rack" | "desk_chair" | "meeting_chair" {
+  if (createOfficeDeskChairBlockingCells().some(chairCell => sameCell(chairCell, cell))) {
+    return "desk_chair";
+  }
 
-function officeDestructibleKind(cell: Cell): "box" | "cabinet" | "plant" | "printer" | "water_cooler" | "server_rack" {
+  if (createOfficeMeetingChairBlockingCells().some(chairCell => sameCell(chairCell, cell))) {
+    return "meeting_chair";
+  }
+
   if (createOfficeServerRackCells().some(serverCell => sameCell(serverCell, cell))) {
     return "server_rack";
   }
 
   const seed = officeCellSeed(cell);
   if (officeFloorIsCorridor(cell)) {
-    return seed % 5 === 0 ? "water_cooler" : "plant";
+    if (officeCellIsCorridorSide(cell)) {
+      return seed % 5 === 0 ? "water_cooler" : "plant";
+    }
+
+    return seed % 2 === 0 ? "box" : "cabinet";
+  }
+
+  if (!officeCellCanHostPlantOrWater(cell)) {
+    switch (seed % 3) {
+      case 0:
+        return "box";
+      case 1:
+        return "cabinet";
+      default:
+        return "printer";
+    }
   }
 
   switch (seed % 8) {
@@ -5477,6 +5832,14 @@ function emitFeedback(
   ]);
 }
 
+function scheduleNextFrame(frameIdsRef: { current: number[] }, callback: () => void) {
+  const frameId = window.requestAnimationFrame(() => {
+    frameIdsRef.current = frameIdsRef.current.filter(id => id !== frameId);
+    callback();
+  });
+  frameIdsRef.current.push(frameId);
+}
+
 function playGameTone(kind: FeedbackCue["kind"]) {
   const AudioContextClass =
     window.AudioContext ??
@@ -5485,7 +5848,12 @@ function playGameTone(kind: FeedbackCue["kind"]) {
     return;
   }
 
-  const context = new AudioContextClass();
+  const context = sharedAudioContext ?? new AudioContextClass();
+  sharedAudioContext = context;
+  if (context.state === "suspended") {
+    void context.resume();
+  }
+
   const oscillator = context.createOscillator();
   const gain = context.createGain();
   const now = context.currentTime;
@@ -5503,7 +5871,8 @@ function playGameTone(kind: FeedbackCue["kind"]) {
   oscillator.start(now);
   oscillator.stop(now + (kind === "pickup" ? 0.23 : 0.29));
   oscillator.addEventListener("ended", () => {
-    void context.close();
+    oscillator.disconnect();
+    gain.disconnect();
   });
 }
 
@@ -5630,38 +5999,29 @@ function createOfficeWallCells(): Cell[] {
   for (const [a, b] of createOfficeDeskPairs()) {
     addDeskPair(a, b);
   }
-  for (const cell of createOfficeDeskChairBlockingCells()) {
-    wallSet.add(cellKey(cell));
-  }
 
   return sortedCellsFromSet(wallSet);
 }
 
 function createOfficeDestructibleCells(wallSet: Set<string>, rng: () => number): Cell[] {
-  const reservedDoorCells = new Set(
-    [
-      ...[3, 8, 14, 20].flatMap(z => [
-        { x: 10, z },
-        { x: 11, z },
-        { x: 12, z }
-      ]),
-      ...[6, 12, 18].flatMap(z => [
-        { x: 5, z },
-        { x: 11, z },
-        { x: 17, z }
-      ])
-    ].map(cellKey)
-  );
+  const reservedDoorCells = new Set(createOfficeNarrowPassageCells().map(cellKey));
   const corridorCandidates = createInteriorCells().filter(cell => {
     const key = cellKey(cell);
-    return officeFloorIsCorridor(cell) && !wallSet.has(key) && !reservedDoorCells.has(key) && !isSpawnSafeCell(cell);
+    return officeFloorIsCorridor(cell) && officeCellIsCorridorSide(cell) && !officeFloorIsServerRoom(cell) && !wallSet.has(key) && !reservedDoorCells.has(key) && !isSpawnSafeCell(cell);
   });
   const roomCandidates = createInteriorCells().filter(cell => {
     const key = cellKey(cell);
-    return !officeFloorIsCorridor(cell) && !wallSet.has(key) && !reservedDoorCells.has(key) && !isSpawnSafeCell(cell);
+    return !officeFloorIsCorridor(cell) && !officeFloorIsServerRoom(cell) && !officeCellIsNarrowPassage(cell) && !wallSet.has(key) && !reservedDoorCells.has(key) && !isSpawnSafeCell(cell);
+  });
+  const plantAndWaterCandidates = createInteriorCells().filter(cell => {
+    const key = cellKey(cell);
+    return officeCellCanHostPlantOrWater(cell) && !wallSet.has(key) && !reservedDoorCells.has(key) && !isSpawnSafeCell(cell);
   });
   const candidateCells = [
+    ...createOfficeDeskChairBlockingCells(),
+    ...createOfficeMeetingChairBlockingCells(),
     ...createOfficeServerRackCells(),
+    ...shuffleCells(plantAndWaterCandidates, rng).slice(0, 16),
     ...shuffleCells(corridorCandidates, rng).slice(0, 9),
     ...shuffleCells(roomCandidates, rng).slice(0, 34)
   ];
@@ -5687,10 +6047,7 @@ function createOfficeMeetingBlockingCells(): Cell[] {
     { x: 16, z: 3 },
     { x: 17, z: 3 },
     { x: 18, z: 3 },
-    { x: 19, z: 3 },
-    { x: 15, z: 2 },
-    { x: 17, z: 2 },
-    { x: 19, z: 2 }
+    { x: 19, z: 3 }
   ];
 }
 
@@ -5712,6 +6069,9 @@ function createOfficeStructuralWallCells(): Cell[] {
 
   for (const z of [5, 11, 17]) {
     for (let x = 1; x < size - 1; x += 1) {
+      if (z === 5 && x >= 14 && x <= 21) {
+        continue;
+      }
       if ([5, 9, 10, 11, 12, 13, 17].includes(x)) {
         continue;
       }
@@ -5751,7 +6111,7 @@ function createOfficeDeskChairBlockingCells(): Cell[] {
     };
 
     for (const chairSpot of officeDeskChairSpots(desk)) {
-      const chairCell = { x: Math.round(chairSpot.x), z: Math.round(chairSpot.z) };
+      const chairCell = officeDeskChairBlockingCell(chairSpot);
       if (chairCell.x > 0 && chairCell.x < size - 1 && chairCell.z > 0 && chairCell.z < size - 1) {
         chairCells.add(cellKey(chairCell));
       }
@@ -6219,14 +6579,6 @@ function cellKey(cell: Cell) {
 
 function cellPosition(x: number, z: number, y: number) {
   return new Vector3(x - center, y, z - center);
-}
-
-function playerTopDownPointerPosition(position: Vector3, direction: Cell) {
-  return new Vector3(position.x + direction.x * 0.54, 0.13, position.z + direction.z * 0.54);
-}
-
-function directionYaw(direction: Cell) {
-  return direction.x !== 0 ? Tools.ToRadians(90) : 0;
 }
 
 function nearestCellFromPosition(position: Vector3): Cell {
