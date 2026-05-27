@@ -156,6 +156,7 @@ const enableGamepadInput = true;
 const enableCameraFollow = true;
 const enableEnemies = true;
 const enableHudClock = true;
+const publicAssetBaseUrl = new URL(import.meta.env.BASE_URL, window.location.href);
 let sharedAudioContext: AudioContext | null = null;
 
 export function ArenaContent({ arena, viewMode, worldSkin, visualStyle, onHudChange, onRestart }: ArenaContentProps) {
@@ -3962,7 +3963,7 @@ function OfficePlayerModel({
     root.position.copyFrom(officePlayerModelPosition(visualPositionRef.current));
     rootRef.current = root;
 
-    SceneLoader.ImportMeshAsync("", "/models/", "meshy-ai-ather-player.glb", scene)
+    SceneLoader.ImportMeshAsync("", new URL("models/", publicAssetBaseUrl).toString(), "meshy-ai-ather-player.glb", scene)
       .then(result => {
         if (isDisposed) {
           result.meshes.forEach(mesh => mesh.dispose(false, true));
