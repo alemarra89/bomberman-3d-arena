@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "node server/dev.mjs",
+    "dev:static": "vite --host 0.0.0.0 --mode static",
     "client": "vite --host 0.0.0.0",
     "server": "node server/api.mjs",
     "build": "tsc -b && vite build",
+    "build:full": "tsc -b && vite build",
+    "build:static": "tsc -b && vite build --mode static",
     "typecheck": "tsc -b",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
