@@ -1160,7 +1160,11 @@ export function ArenaContent({ arena, viewMode, worldSkin, visualStyle, onHudCha
       )}
 
       {isTopDown ? (
-        <TopDownPlayerSprite visualPositionRef={playerVisualPositionRef} visualStyle={visualStyle} />
+        worldSkin === "office" ? (
+          <OfficeTopDownPlayerSprite visualPositionRef={playerVisualPositionRef} />
+        ) : (
+          <TopDownPlayerSprite visualPositionRef={playerVisualPositionRef} visualStyle={visualStyle} />
+        )
       ) : (
         <Player
           arena={arena}
@@ -3117,6 +3121,164 @@ function TopDownPlayerSprite({
     </>
   );
 }
+
+function OfficeTopDownPlayerSprite({ visualPositionRef }: { visualPositionRef: { current: Vector3 } }) {
+  const scene = useScene();
+  const position = visualPositionRef.current;
+
+  useEffect(() => {
+    const observer = scene.onBeforeRenderObservable.add(() => {
+      const anchor = visualPositionRef.current;
+      for (const part of officeTopDownPlayerParts) {
+        positionPlayerDetail(scene, part.name, new Vector3(anchor.x + part.x, part.y, anchor.z + part.z));
+      }
+    });
+
+    return () => {
+      scene.onBeforeRenderObservable.remove(observer);
+    };
+  }, [scene, visualPositionRef]);
+
+  const ink = Color3.FromHexString("#111111");
+  const skin = Color3.FromHexString("#F2E6D0");
+  const hair = Color3.FromHexString("#F8FAFC");
+  const hairShade = Color3.FromHexString("#E5E7EB");
+  const eyeWhite = Color3.FromHexString("#FFFFFF");
+  const jacket = Color3.FromHexString("#9B6F45");
+  const jacketDark = Color3.FromHexString("#4B2F1B");
+  const shirt = Color3.FromHexString("#577C58");
+  const jeans = Color3.FromHexString("#6F97AA");
+  const jeansLight = Color3.FromHexString("#9EC3D3");
+  const boot = Color3.FromHexString("#111827");
+
+  return (
+    <>
+      <cylinder name="office-topdown-player-shadow" position={new Vector3(position.x, 0.16, position.z + 0.25)} options={{ height: 0.025, diameter: 0.7, tessellation: 32 }}>
+        <standardMaterial name="office-topdown-player-shadow-material" diffuseColor={Color3.FromHexString("#020617")} emissiveColor={Color3.FromHexString("#000000")} alpha={0.3} />
+      </cylinder>
+      <cylinder name="office-topdown-player-boot-left" position={new Vector3(position.x - 0.17, 0.24, position.z + 0.4)} options={{ height: 0.05, diameter: 0.22, tessellation: 20 }}>
+        <standardMaterial name="office-topdown-player-boot-left-material" diffuseColor={boot} emissiveColor={Color3.FromHexString("#000000")} />
+      </cylinder>
+      <cylinder name="office-topdown-player-boot-right" position={new Vector3(position.x + 0.17, 0.24, position.z + 0.4)} options={{ height: 0.05, diameter: 0.22, tessellation: 20 }}>
+        <standardMaterial name="office-topdown-player-boot-right-material" diffuseColor={boot} emissiveColor={Color3.FromHexString("#000000")} />
+      </cylinder>
+      <box name="office-topdown-player-jeans-outline" position={new Vector3(position.x, 0.255, position.z + 0.22)} options={{ width: 0.45, height: 0.03, depth: 0.4 }}>
+        <standardMaterial name="office-topdown-player-jeans-outline-material" diffuseColor={ink} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <box name="office-topdown-player-jeans-left" position={new Vector3(position.x - 0.12, 0.28, position.z + 0.22)} options={{ width: 0.17, height: 0.05, depth: 0.36 }}>
+        <standardMaterial name="office-topdown-player-jeans-left-material" diffuseColor={jeans} emissiveColor={Color3.FromHexString("#000000")} specularColor={ink} />
+      </box>
+      <box name="office-topdown-player-jeans-right" position={new Vector3(position.x + 0.12, 0.28, position.z + 0.22)} options={{ width: 0.17, height: 0.05, depth: 0.36 }}>
+        <standardMaterial name="office-topdown-player-jeans-right-material" diffuseColor={jeans} emissiveColor={Color3.FromHexString("#000000")} specularColor={ink} />
+      </box>
+      <box name="office-topdown-player-jeans-light-left" position={new Vector3(position.x - 0.18, 0.315, position.z + 0.18)} options={{ width: 0.04, height: 0.025, depth: 0.18 }}>
+        <standardMaterial name="office-topdown-player-jeans-light-left-material" diffuseColor={jeansLight} emissiveColor={Color3.FromHexString("#000000")} alpha={0.74} />
+      </box>
+      <box name="office-topdown-player-jeans-light-right" position={new Vector3(position.x + 0.18, 0.315, position.z + 0.18)} options={{ width: 0.04, height: 0.025, depth: 0.18 }}>
+        <standardMaterial name="office-topdown-player-jeans-light-right-material" diffuseColor={jeansLight} emissiveColor={Color3.FromHexString("#000000")} alpha={0.74} />
+      </box>
+      <box name="office-topdown-player-jacket-outline" position={new Vector3(position.x, 0.305, position.z - 0.03)} options={{ width: 0.68, height: 0.035, depth: 0.52 }}>
+        <standardMaterial name="office-topdown-player-jacket-outline-material" diffuseColor={ink} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <box name="office-topdown-player-jacket" position={new Vector3(position.x, 0.33, position.z - 0.03)} options={{ width: 0.62, height: 0.055, depth: 0.48 }}>
+        <standardMaterial name="office-topdown-player-jacket-material" diffuseColor={jacket} emissiveColor={Color3.FromHexString("#000000")} specularColor={ink} />
+      </box>
+      <box name="office-topdown-player-shirt" position={new Vector3(position.x, 0.365, position.z - 0.03)} options={{ width: 0.28, height: 0.035, depth: 0.47 }}>
+        <standardMaterial name="office-topdown-player-shirt-material" diffuseColor={shirt} emissiveColor={Color3.FromHexString("#000000")} specularColor={ink} />
+      </box>
+      <box name="office-topdown-player-shirt-neck" position={new Vector3(position.x, 0.395, position.z - 0.28)} rotationY={Tools.ToRadians(45)} options={{ width: 0.16, height: 0.025, depth: 0.16 }}>
+        <standardMaterial name="office-topdown-player-shirt-neck-material" diffuseColor={shirt} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <box name="office-topdown-player-jacket-left" position={new Vector3(position.x - 0.24, 0.38, position.z - 0.02)} rotationY={Tools.ToRadians(-7)} options={{ width: 0.13, height: 0.035, depth: 0.51 }}>
+        <standardMaterial name="office-topdown-player-jacket-left-material" diffuseColor={jacketDark} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <box name="office-topdown-player-jacket-right" position={new Vector3(position.x + 0.24, 0.38, position.z - 0.02)} rotationY={Tools.ToRadians(7)} options={{ width: 0.13, height: 0.035, depth: 0.51 }}>
+        <standardMaterial name="office-topdown-player-jacket-right-material" diffuseColor={jacketDark} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <box name="office-topdown-player-sleeve-left" position={new Vector3(position.x - 0.39, 0.39, position.z - 0.03)} rotationY={Tools.ToRadians(-12)} options={{ width: 0.12, height: 0.035, depth: 0.34 }}>
+        <standardMaterial name="office-topdown-player-sleeve-left-material" diffuseColor={jacket} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <box name="office-topdown-player-sleeve-right" position={new Vector3(position.x + 0.39, 0.39, position.z - 0.03)} rotationY={Tools.ToRadians(12)} options={{ width: 0.12, height: 0.035, depth: 0.34 }}>
+        <standardMaterial name="office-topdown-player-sleeve-right-material" diffuseColor={jacket} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <cylinder name="office-topdown-player-hand-left" position={new Vector3(position.x - 0.44, 0.42, position.z + 0.1)} options={{ height: 0.055, diameter: 0.2, tessellation: 22 }}>
+        <standardMaterial name="office-topdown-player-hand-left-material" diffuseColor={skin} emissiveColor={Color3.FromHexString("#000000")} />
+      </cylinder>
+      <cylinder name="office-topdown-player-hand-right" position={new Vector3(position.x + 0.44, 0.42, position.z + 0.1)} options={{ height: 0.055, diameter: 0.2, tessellation: 22 }}>
+        <standardMaterial name="office-topdown-player-hand-right-material" diffuseColor={skin} emissiveColor={Color3.FromHexString("#000000")} />
+      </cylinder>
+      <cylinder name="office-topdown-player-head-outline" position={new Vector3(position.x, 0.43, position.z - 0.28)} options={{ height: 0.045, diameter: 0.84, tessellation: 48 }}>
+        <standardMaterial name="office-topdown-player-head-outline-material" diffuseColor={ink} emissiveColor={Color3.FromHexString("#000000")} />
+      </cylinder>
+      <cylinder name="office-topdown-player-hair" position={new Vector3(position.x, 0.46, position.z - 0.29)} options={{ height: 0.07, diameter: 0.78, tessellation: 48 }}>
+        <standardMaterial name="office-topdown-player-hair-material" diffuseColor={hair} emissiveColor={Color3.FromHexString("#000000")} specularColor={hair} />
+      </cylinder>
+      <box name="office-topdown-player-hair-side-left" position={new Vector3(position.x - 0.38, 0.5, position.z - 0.2)} rotationY={Tools.ToRadians(14)} options={{ width: 0.11, height: 0.035, depth: 0.32 }}>
+        <standardMaterial name="office-topdown-player-hair-side-left-material" diffuseColor={hairShade} emissiveColor={Color3.FromHexString("#000000")} specularColor={hair} />
+      </box>
+      <box name="office-topdown-player-hair-side-right" position={new Vector3(position.x + 0.38, 0.5, position.z - 0.2)} rotationY={Tools.ToRadians(-14)} options={{ width: 0.11, height: 0.035, depth: 0.32 }}>
+        <standardMaterial name="office-topdown-player-hair-side-right-material" diffuseColor={hairShade} emissiveColor={Color3.FromHexString("#000000")} specularColor={hair} />
+      </box>
+      <box name="office-topdown-player-hair-swoop" position={new Vector3(position.x + 0.16, 0.535, position.z - 0.49)} rotationY={Tools.ToRadians(-28)} options={{ width: 0.32, height: 0.035, depth: 0.13 }}>
+        <standardMaterial name="office-topdown-player-hair-swoop-material" diffuseColor={hair} emissiveColor={Color3.FromHexString("#000000")} specularColor={hair} />
+      </box>
+      <cylinder name="office-topdown-player-face" position={new Vector3(position.x, 0.545, position.z - 0.32)} options={{ height: 0.035, diameter: 0.48, tessellation: 36 }}>
+        <standardMaterial name="office-topdown-player-face-material" diffuseColor={skin} emissiveColor={Color3.FromHexString("#000000")} specularColor={skin} />
+      </cylinder>
+      <box name="office-topdown-player-beard" position={new Vector3(position.x, 0.57, position.z - 0.08)} options={{ width: 0.56, height: 0.035, depth: 0.28 }}>
+        <standardMaterial name="office-topdown-player-beard-material" diffuseColor={hair} emissiveColor={Color3.FromHexString("#000000")} specularColor={hairShade} />
+      </box>
+      <box name="office-topdown-player-eye-white-left" position={new Vector3(position.x - 0.12, 0.585, position.z - 0.35)} options={{ width: 0.1, height: 0.025, depth: 0.11 }}>
+        <standardMaterial name="office-topdown-player-eye-white-left-material" diffuseColor={eyeWhite} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <box name="office-topdown-player-eye-white-right" position={new Vector3(position.x + 0.12, 0.585, position.z - 0.35)} options={{ width: 0.1, height: 0.025, depth: 0.11 }}>
+        <standardMaterial name="office-topdown-player-eye-white-right-material" diffuseColor={eyeWhite} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <box name="office-topdown-player-eye-left" position={new Vector3(position.x - 0.1, 0.61, position.z - 0.35)} options={{ width: 0.04, height: 0.025, depth: 0.08 }}>
+        <standardMaterial name="office-topdown-player-eye-left-material" diffuseColor={ink} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <box name="office-topdown-player-eye-right" position={new Vector3(position.x + 0.1, 0.61, position.z - 0.35)} options={{ width: 0.04, height: 0.025, depth: 0.08 }}>
+        <standardMaterial name="office-topdown-player-eye-right-material" diffuseColor={ink} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <box name="office-topdown-player-mouth" position={new Vector3(position.x, 0.615, position.z - 0.16)} options={{ width: 0.11, height: 0.025, depth: 0.035 }}>
+        <standardMaterial name="office-topdown-player-mouth-material" diffuseColor={ink} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+    </>
+  );
+}
+
+const officeTopDownPlayerParts = [
+  { name: "office-topdown-player-shadow", x: 0, y: 0.16, z: 0.25 },
+  { name: "office-topdown-player-boot-left", x: -0.17, y: 0.24, z: 0.4 },
+  { name: "office-topdown-player-boot-right", x: 0.17, y: 0.24, z: 0.4 },
+  { name: "office-topdown-player-jeans-outline", x: 0, y: 0.255, z: 0.22 },
+  { name: "office-topdown-player-jeans-left", x: -0.12, y: 0.28, z: 0.22 },
+  { name: "office-topdown-player-jeans-right", x: 0.12, y: 0.28, z: 0.22 },
+  { name: "office-topdown-player-jeans-light-left", x: -0.18, y: 0.315, z: 0.18 },
+  { name: "office-topdown-player-jeans-light-right", x: 0.18, y: 0.315, z: 0.18 },
+  { name: "office-topdown-player-jacket-outline", x: 0, y: 0.305, z: -0.03 },
+  { name: "office-topdown-player-jacket", x: 0, y: 0.33, z: -0.03 },
+  { name: "office-topdown-player-shirt", x: 0, y: 0.365, z: -0.03 },
+  { name: "office-topdown-player-shirt-neck", x: 0, y: 0.395, z: -0.28 },
+  { name: "office-topdown-player-jacket-left", x: -0.24, y: 0.38, z: -0.02 },
+  { name: "office-topdown-player-jacket-right", x: 0.24, y: 0.38, z: -0.02 },
+  { name: "office-topdown-player-sleeve-left", x: -0.39, y: 0.39, z: -0.03 },
+  { name: "office-topdown-player-sleeve-right", x: 0.39, y: 0.39, z: -0.03 },
+  { name: "office-topdown-player-hand-left", x: -0.44, y: 0.42, z: 0.1 },
+  { name: "office-topdown-player-hand-right", x: 0.44, y: 0.42, z: 0.1 },
+  { name: "office-topdown-player-head-outline", x: 0, y: 0.43, z: -0.28 },
+  { name: "office-topdown-player-hair", x: 0, y: 0.46, z: -0.29 },
+  { name: "office-topdown-player-hair-side-left", x: -0.38, y: 0.5, z: -0.2 },
+  { name: "office-topdown-player-hair-side-right", x: 0.38, y: 0.5, z: -0.2 },
+  { name: "office-topdown-player-hair-swoop", x: 0.16, y: 0.535, z: -0.49 },
+  { name: "office-topdown-player-face", x: 0, y: 0.545, z: -0.32 },
+  { name: "office-topdown-player-beard", x: 0, y: 0.57, z: -0.08 },
+  { name: "office-topdown-player-eye-white-left", x: -0.12, y: 0.585, z: -0.35 },
+  { name: "office-topdown-player-eye-white-right", x: 0.12, y: 0.585, z: -0.35 },
+  { name: "office-topdown-player-eye-left", x: -0.1, y: 0.61, z: -0.35 },
+  { name: "office-topdown-player-eye-right", x: 0.1, y: 0.61, z: -0.35 },
+  { name: "office-topdown-player-mouth", x: 0, y: 0.615, z: -0.16 }
+] as const;
 
 const topDownPlayerParts = [
   { name: "topdown-player-shadow", x: 0, y: 0.17, z: 0.27 },
