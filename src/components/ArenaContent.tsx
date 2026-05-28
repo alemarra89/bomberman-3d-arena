@@ -1153,7 +1153,13 @@ export function ArenaContent({ arena, viewMode, worldSkin, visualStyle, onHudCha
 
       {enemies.map(enemy =>
         isTopDown ? (
-          <TopDownEnemySprite key={enemy.id} enemy={enemy} visualStyle={visualStyle} />
+          worldSkin === "office" ? (
+            <OfficeTopDownEnemySprite key={enemy.id} enemy={enemy} />
+          ) : (
+            <TopDownEnemySprite key={enemy.id} enemy={enemy} visualStyle={visualStyle} />
+          )
+        ) : worldSkin === "office" ? (
+          <OfficeEnemyToken key={enemy.id} enemy={enemy} />
         ) : (
           <EnemyToken key={enemy.id} enemy={enemy} isTopDown={isTopDown} visualStyle={visualStyle} />
         )
@@ -3360,6 +3366,10 @@ function enemyVisualPosition(anchor: Vector3, offsetX: number, offsetZ: number, 
   return new Vector3(anchor.x + offsetX, y, anchor.z + offsetZ);
 }
 
+function enemyOrientedPosition(anchor: Vector3, offsetX: number, offsetZ: number, y: number, yaw: number) {
+  return anchor.add(rotatePlayerOffset(new Vector3(offsetX, y - anchor.y, offsetZ), yaw));
+}
+
 function TopDownEnemySprite({
   enemy,
   visualStyle
@@ -3437,6 +3447,84 @@ function TopDownEnemySprite({
       <box name={`topdown-enemy-mouth-${enemy.id}`} position={enemyVisualPosition(position, 0, 0.12, 0.34)} options={{ width: 0.22, height: 0.03, depth: 0.05 }}>
         <standardMaterial name={`topdown-enemy-mouth-material-${enemy.id}`} diffuseColor={Color3.FromHexString(palette.ink)} emissiveColor={Color3.FromHexString("#000000")} />
       </box>
+    </>
+  );
+}
+
+function OfficeTopDownEnemySprite({ enemy }: { enemy: ActiveEnemy; key?: string }) {
+  const position = useSmoothEnemyPosition(enemy, 0.28);
+  const ink = Color3.FromHexString("#111827");
+  const paper = Color3.FromHexString("#F8FAFC");
+  const skin = Color3.FromHexString("#F2E6D0");
+  const colleagueShirt = Color3.FromHexString("#7DD3FC");
+  const managerSuit = Color3.FromHexString("#111827");
+  const droneSteel = Color3.FromHexString("#94A3B8");
+  const screenBlue = Color3.FromHexString("#38BDF8");
+
+  if (enemy.type === "ghost") {
+    return (
+      <>
+        <cylinder name={`office-topdown-enemy-shadow-${enemy.id}`} position={enemyVisualPosition(position, 0, 0.05, 0.18)} options={{ height: 0.025, diameter: 0.82, tessellation: 36 }}>
+          <standardMaterial name={`office-topdown-enemy-shadow-material-${enemy.id}`} diffuseColor={Color3.FromHexString("#020617")} emissiveColor={Color3.FromHexString("#000000")} alpha={0.28} />
+        </cylinder>
+        <cylinder name={`office-topdown-enemy-drone-body-${enemy.id}`} position={position} options={{ height: 0.07, diameter: 0.62, tessellation: 40 }}>
+          <standardMaterial name={`office-topdown-enemy-drone-body-material-${enemy.id}`} diffuseColor={droneSteel} emissiveColor={Color3.FromHexString("#000000")} specularColor={paper} />
+        </cylinder>
+        <torus name={`office-topdown-enemy-drone-ring-${enemy.id}`} position={enemyVisualPosition(position, 0, 0, 0.34)} rotationX={Tools.ToRadians(90)} options={{ diameter: 0.76, thickness: 0.045, tessellation: 40 }}>
+          <standardMaterial name={`office-topdown-enemy-drone-ring-material-${enemy.id}`} diffuseColor={screenBlue} emissiveColor={screenBlue} alpha={0.76} />
+        </torus>
+        <box name={`office-topdown-enemy-drone-scan-${enemy.id}`} position={enemyVisualPosition(position, 0, -0.27, 0.37)} options={{ width: 0.3, height: 0.025, depth: 0.08 }}>
+          <standardMaterial name={`office-topdown-enemy-drone-scan-material-${enemy.id}`} diffuseColor={screenBlue} emissiveColor={screenBlue} />
+        </box>
+        <cylinder name={`office-topdown-enemy-drone-light-${enemy.id}`} position={enemyVisualPosition(position, 0, -0.09, 0.39)} options={{ height: 0.025, diameter: 0.13, tessellation: 20 }}>
+          <standardMaterial name={`office-topdown-enemy-drone-light-material-${enemy.id}`} diffuseColor={Color3.FromHexString("#FDE68A")} emissiveColor={Color3.FromHexString("#F59E0B")} />
+        </cylinder>
+      </>
+    );
+  }
+
+  const jacket = enemy.type === "chaser" ? managerSuit : colleagueShirt;
+  const accent = enemy.type === "chaser" ? Color3.FromHexString("#B91C1C") : Color3.FromHexString("#FDE68A");
+  const tieWidth = enemy.type === "chaser" ? 0.13 : 0.04;
+
+  return (
+    <>
+      <cylinder name={`office-topdown-enemy-shadow-${enemy.id}`} position={enemyVisualPosition(position, 0, 0.23, 0.18)} options={{ height: 0.025, diameter: 0.68, tessellation: 32 }}>
+        <standardMaterial name={`office-topdown-enemy-shadow-material-${enemy.id}`} diffuseColor={Color3.FromHexString("#020617")} emissiveColor={Color3.FromHexString("#000000")} alpha={0.28} />
+      </cylinder>
+      <box name={`office-topdown-enemy-body-outline-${enemy.id}`} position={enemyVisualPosition(position, 0, 0.02, 0.24)} options={{ width: 0.62, height: 0.04, depth: 0.55 }}>
+        <standardMaterial name={`office-topdown-enemy-body-outline-material-${enemy.id}`} diffuseColor={ink} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <box name={`office-topdown-enemy-body-${enemy.id}`} position={enemyVisualPosition(position, 0, 0.02, 0.285)} options={{ width: 0.54, height: 0.055, depth: 0.48 }}>
+        <standardMaterial name={`office-topdown-enemy-body-material-${enemy.id}`} diffuseColor={jacket} emissiveColor={Color3.FromHexString("#000000")} specularColor={ink} />
+      </box>
+      <box name={`office-topdown-enemy-shirt-${enemy.id}`} position={enemyVisualPosition(position, 0, -0.06, 0.325)} options={{ width: enemy.type === "chaser" ? 0.22 : 0.34, height: 0.032, depth: 0.36 }}>
+        <standardMaterial name={`office-topdown-enemy-shirt-material-${enemy.id}`} diffuseColor={paper} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <box name={`office-topdown-enemy-tie-${enemy.id}`} position={enemyVisualPosition(position, 0, -0.01, 0.355)} options={{ width: tieWidth, height: 0.03, depth: 0.26 }}>
+        <standardMaterial name={`office-topdown-enemy-tie-material-${enemy.id}`} diffuseColor={accent} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <cylinder name={`office-topdown-enemy-head-${enemy.id}`} position={enemyVisualPosition(position, 0, -0.32, 0.4)} options={{ height: 0.055, diameter: 0.46, tessellation: 32 }}>
+        <standardMaterial name={`office-topdown-enemy-head-material-${enemy.id}`} diffuseColor={skin} emissiveColor={Color3.FromHexString("#000000")} specularColor={skin} />
+      </cylinder>
+      <box name={`office-topdown-enemy-hair-${enemy.id}`} position={enemyVisualPosition(position, 0, -0.5, 0.44)} options={{ width: 0.46, height: 0.035, depth: 0.13 }}>
+        <standardMaterial name={`office-topdown-enemy-hair-material-${enemy.id}`} diffuseColor={ink} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <box name={`office-topdown-enemy-eye-left-${enemy.id}`} position={enemyVisualPosition(position, -0.1, -0.35, 0.46)} options={{ width: 0.055, height: 0.025, depth: 0.08 }}>
+        <standardMaterial name={`office-topdown-enemy-eye-left-material-${enemy.id}`} diffuseColor={ink} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <box name={`office-topdown-enemy-eye-right-${enemy.id}`} position={enemyVisualPosition(position, 0.1, -0.35, 0.46)} options={{ width: 0.055, height: 0.025, depth: 0.08 }}>
+        <standardMaterial name={`office-topdown-enemy-eye-right-material-${enemy.id}`} diffuseColor={ink} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      {enemy.type === "chaser" ? (
+        <box name={`office-topdown-enemy-clipboard-${enemy.id}`} position={enemyVisualPosition(position, 0.38, -0.02, 0.39)} rotationY={Tools.ToRadians(-8)} options={{ width: 0.16, height: 0.035, depth: 0.36 }}>
+          <standardMaterial name={`office-topdown-enemy-clipboard-material-${enemy.id}`} diffuseColor={Color3.FromHexString("#A16207")} emissiveColor={Color3.FromHexString("#000000")} />
+        </box>
+      ) : (
+        <box name={`office-topdown-enemy-badge-${enemy.id}`} position={enemyVisualPosition(position, -0.19, -0.11, 0.37)} options={{ width: 0.1, height: 0.025, depth: 0.1 }}>
+          <standardMaterial name={`office-topdown-enemy-badge-material-${enemy.id}`} diffuseColor={accent} emissiveColor={Color3.FromHexString("#000000")} />
+        </box>
+      )}
     </>
   );
 }
@@ -4434,8 +4522,9 @@ function EnemyDetails({
 }) {
   const eyeColor = Color3.FromHexString(visualStyle === "neon_cinematic" ? "#F8FAFC" : "#111827");
   const eyeEmissive = Color3.FromHexString(isTopDown ? "#000000" : visualStyle === "neon_cinematic" ? "#FFFFFF" : "#F8FAFC");
-  const leftEye = enemyVisualPosition(position, -0.14, -0.24, enemy.type === "ghost" ? 0.56 : 0.48);
-  const rightEye = enemyVisualPosition(position, 0.14, -0.24, enemy.type === "ghost" ? 0.56 : 0.48);
+  const yaw = playerFacingYaw(enemy.direction);
+  const leftEye = enemyOrientedPosition(position, -0.14, -0.24, enemy.type === "ghost" ? 0.56 : 0.48, yaw);
+  const rightEye = enemyOrientedPosition(position, 0.14, -0.24, enemy.type === "ghost" ? 0.56 : 0.48, yaw);
 
   return (
     <>
@@ -4452,16 +4541,16 @@ function EnemyDetails({
       ) : null}
       {enemy.type === "chaser" ? (
         <>
-          <box name={`enemy-fin-left-${enemy.id}`} position={enemyVisualPosition(position, -0.36, 0, 0.44)} rotationZ={Tools.ToRadians(35)} options={{ width: 0.22, height: 0.08, depth: 0.18 }}>
+          <box name={`enemy-fin-left-${enemy.id}`} position={enemyOrientedPosition(position, -0.36, 0, 0.44, yaw)} rotationY={yaw} rotationZ={Tools.ToRadians(35)} options={{ width: 0.22, height: 0.08, depth: 0.18 }}>
             <standardMaterial name={`enemy-fin-left-material-${enemy.id}`} diffuseColor={Color3.FromHexString("#FBCFE8")} emissiveColor={eyeEmissive} />
           </box>
-          <box name={`enemy-fin-right-${enemy.id}`} position={enemyVisualPosition(position, 0.36, 0, 0.44)} rotationZ={Tools.ToRadians(-35)} options={{ width: 0.22, height: 0.08, depth: 0.18 }}>
+          <box name={`enemy-fin-right-${enemy.id}`} position={enemyOrientedPosition(position, 0.36, 0, 0.44, yaw)} rotationY={yaw} rotationZ={Tools.ToRadians(-35)} options={{ width: 0.22, height: 0.08, depth: 0.18 }}>
             <standardMaterial name={`enemy-fin-right-material-${enemy.id}`} diffuseColor={Color3.FromHexString("#FBCFE8")} emissiveColor={eyeEmissive} />
           </box>
         </>
       ) : null}
       {enemy.type === "ghost" ? (
-        <torus name={`enemy-ghost-ring-${enemy.id}`} position={enemyVisualPosition(position, 0, 0, 0.14)} rotationX={Tools.ToRadians(90)} options={{ diameter: 0.74, thickness: 0.05, tessellation: 36 }}>
+        <torus name={`enemy-ghost-ring-${enemy.id}`} position={enemyOrientedPosition(position, 0, 0, 0.14, yaw)} rotationX={Tools.ToRadians(90)} options={{ diameter: 0.74, thickness: 0.05, tessellation: 36 }}>
           <standardMaterial name={`enemy-ghost-ring-material-${enemy.id}`} diffuseColor={Color3.FromHexString("#DDD6FE")} emissiveColor={eyeEmissive} alpha={0.8} />
         </torus>
       ) : null}
@@ -4797,6 +4886,7 @@ function EnemyToken({
   const color = colorByType[enemy.type];
 
   const bodyPosition = useSmoothEnemyPosition(enemy, 0.42);
+  const yaw = playerFacingYaw(enemy.direction);
   return (
     <>
       {isTopDown ? <EnemyTopDownMarker enemy={enemy} /> : null}
@@ -4805,7 +4895,7 @@ function EnemyToken({
           <standardMaterial name={`enemy-material-${enemy.id}`} diffuseColor={Color3.FromHexString(color)} emissiveColor={Color3.FromHexString(isTopDown ? "#000000" : color)} specularColor={Color3.FromHexString(isTopDown ? "#000000" : "#FFFFFF")} alpha={enemy.type === "ghost" ? 0.82 : 1} />
         </sphere>
       ) : enemy.type === "chaser" ? (
-        <box name={`enemy-${enemy.id}`} position={bodyPosition} rotationY={Tools.ToRadians(45)} options={{ width: 0.58, height: 0.58, depth: 0.58 }}>
+        <box name={`enemy-${enemy.id}`} position={bodyPosition} rotationY={yaw + Tools.ToRadians(45)} options={{ width: 0.58, height: 0.58, depth: 0.58 }}>
           <standardMaterial name={`enemy-material-${enemy.id}`} diffuseColor={Color3.FromHexString(color)} emissiveColor={Color3.FromHexString(isTopDown ? "#000000" : color)} specularColor={Color3.FromHexString(isTopDown ? "#000000" : "#FFFFFF")} />
         </box>
       ) : enemy.type === "ghost" ? (
@@ -4818,6 +4908,138 @@ function EnemyToken({
         </sphere>
       )}
       <EnemyDetails enemy={enemy} isTopDown={isTopDown} visualStyle={visualStyle} position={bodyPosition} />
+    </>
+  );
+}
+
+function OfficeEnemyToken({ enemy }: { enemy: ActiveEnemy; key?: string }) {
+  const position = useSmoothEnemyPosition(enemy, 0.42);
+
+  if (enemy.type === "ghost") {
+    return <OfficeDroneEnemy enemy={enemy} position={position} />;
+  }
+
+  return <OfficeHumanEnemy enemy={enemy} position={position} />;
+}
+
+function OfficeHumanEnemy({ enemy, position }: { enemy: ActiveEnemy; position: Vector3 }) {
+  const isChaser = enemy.type === "chaser";
+  const suit = Color3.FromHexString(isChaser ? "#111827" : "#7DD3FC");
+  const suitDark = Color3.FromHexString(isChaser ? "#020617" : "#0369A1");
+  const shirt = Color3.FromHexString(isChaser ? "#F8FAFC" : "#BAE6FD");
+  const skin = Color3.FromHexString("#F2E6D0");
+  const hair = Color3.FromHexString("#111827");
+  const accent = Color3.FromHexString(isChaser ? "#B91C1C" : "#FDE68A");
+  const black = Color3.FromHexString("#020617");
+  const white = Color3.FromHexString("#FFFFFF");
+  const yaw = playerFacingYaw(enemy.direction);
+  const p = (x: number, z: number, y: number) => enemyOrientedPosition(position, x, z, y, yaw);
+
+  return (
+    <>
+      <cylinder name={`office-enemy-shadow-${enemy.id}`} position={enemyVisualPosition(position, 0, 0.06, 0.035)} options={{ height: 0.025, diameter: 0.72, tessellation: 32 }}>
+        <standardMaterial name={`office-enemy-shadow-material-${enemy.id}`} diffuseColor={black} emissiveColor={Color3.FromHexString("#000000")} alpha={0.34} />
+      </cylinder>
+      <box name={`office-enemy-torso-${enemy.id}`} position={p(0, 0, 0.49)} rotationY={yaw} options={{ width: 0.5, height: 0.66, depth: 0.34 }}>
+        <standardMaterial name={`office-enemy-torso-material-${enemy.id}`} diffuseColor={suit} emissiveColor={Color3.FromHexString("#000000")} specularColor={white} />
+      </box>
+      <box name={`office-enemy-shirt-${enemy.id}`} position={p(0, -0.16, 0.52)} rotationY={yaw} options={{ width: isChaser ? 0.2 : 0.3, height: 0.44, depth: 0.035 }}>
+        <standardMaterial name={`office-enemy-shirt-material-${enemy.id}`} diffuseColor={shirt} emissiveColor={Color3.FromHexString("#000000")} specularColor={white} />
+      </box>
+      {isChaser ? (
+        <box name={`office-enemy-tie-${enemy.id}`} position={p(0, -0.19, 0.52)} rotationY={yaw} options={{ width: 0.09, height: 0.34, depth: 0.05 }}>
+          <standardMaterial name={`office-enemy-tie-material-${enemy.id}`} diffuseColor={accent} emissiveColor={Color3.FromHexString("#000000")} />
+        </box>
+      ) : null}
+      <box name={`office-enemy-shoulder-left-${enemy.id}`} position={p(-0.28, -0.02, 0.62)} rotationY={yaw} rotationZ={Tools.ToRadians(-8)} options={{ width: 0.14, height: 0.43, depth: 0.2 }}>
+        <standardMaterial name={`office-enemy-shoulder-left-material-${enemy.id}`} diffuseColor={suitDark} emissiveColor={Color3.FromHexString("#000000")} specularColor={white} />
+      </box>
+      <box name={`office-enemy-shoulder-right-${enemy.id}`} position={p(0.28, -0.02, 0.62)} rotationY={yaw} rotationZ={Tools.ToRadians(8)} options={{ width: 0.14, height: 0.43, depth: 0.2 }}>
+        <standardMaterial name={`office-enemy-shoulder-right-material-${enemy.id}`} diffuseColor={suitDark} emissiveColor={Color3.FromHexString("#000000")} specularColor={white} />
+      </box>
+      <sphere name={`office-enemy-hand-left-${enemy.id}`} position={p(-0.34, -0.02, 0.32)} options={{ diameter: 0.13, segments: 14 }}>
+        <standardMaterial name={`office-enemy-hand-left-material-${enemy.id}`} diffuseColor={skin} emissiveColor={Color3.FromHexString("#000000")} specularColor={white} />
+      </sphere>
+      <sphere name={`office-enemy-hand-right-${enemy.id}`} position={p(0.34, -0.02, 0.32)} options={{ diameter: 0.13, segments: 14 }}>
+        <standardMaterial name={`office-enemy-hand-right-material-${enemy.id}`} diffuseColor={skin} emissiveColor={Color3.FromHexString("#000000")} specularColor={white} />
+      </sphere>
+      <box name={`office-enemy-leg-left-${enemy.id}`} position={p(-0.13, 0.02, 0.12)} rotationY={yaw} options={{ width: 0.13, height: 0.24, depth: 0.18 }}>
+        <standardMaterial name={`office-enemy-leg-left-material-${enemy.id}`} diffuseColor={suitDark} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <box name={`office-enemy-leg-right-${enemy.id}`} position={p(0.13, 0.02, 0.12)} rotationY={yaw} options={{ width: 0.13, height: 0.24, depth: 0.18 }}>
+        <standardMaterial name={`office-enemy-leg-right-material-${enemy.id}`} diffuseColor={suitDark} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <sphere name={`office-enemy-head-${enemy.id}`} position={p(0, -0.02, 0.9)} options={{ diameter: 0.34, segments: 24 }}>
+        <standardMaterial name={`office-enemy-head-material-${enemy.id}`} diffuseColor={skin} emissiveColor={Color3.FromHexString("#000000")} specularColor={white} />
+      </sphere>
+      <box name={`office-enemy-hair-${enemy.id}`} position={p(0, -0.11, 1.08)} rotationY={yaw} options={{ width: 0.32, height: 0.11, depth: 0.18 }}>
+        <standardMaterial name={`office-enemy-hair-material-${enemy.id}`} diffuseColor={hair} emissiveColor={Color3.FromHexString("#000000")} />
+      </box>
+      <sphere name={`office-enemy-eye-left-${enemy.id}`} position={p(-0.08, -0.18, 0.94)} options={{ diameter: 0.045, segments: 10 }}>
+        <standardMaterial name={`office-enemy-eye-left-material-${enemy.id}`} diffuseColor={black} emissiveColor={Color3.FromHexString("#000000")} />
+      </sphere>
+      <sphere name={`office-enemy-eye-right-${enemy.id}`} position={p(0.08, -0.18, 0.94)} options={{ diameter: 0.045, segments: 10 }}>
+        <standardMaterial name={`office-enemy-eye-right-material-${enemy.id}`} diffuseColor={black} emissiveColor={Color3.FromHexString("#000000")} />
+      </sphere>
+      {isChaser ? (
+        <>
+          <box name={`office-enemy-clipboard-${enemy.id}`} position={p(0.44, -0.08, 0.56)} rotationY={yaw} rotationZ={Tools.ToRadians(-10)} options={{ width: 0.2, height: 0.38, depth: 0.06 }}>
+            <standardMaterial name={`office-enemy-clipboard-material-${enemy.id}`} diffuseColor={Color3.FromHexString("#A16207")} emissiveColor={Color3.FromHexString("#000000")} specularColor={Color3.FromHexString("#FED7AA")} />
+          </box>
+          <box name={`office-enemy-alert-stem-${enemy.id}`} position={p(0, -0.02, 1.35)} rotationY={yaw} options={{ width: 0.07, height: 0.25, depth: 0.07 }}>
+            <standardMaterial name={`office-enemy-alert-stem-material-${enemy.id}`} diffuseColor={accent} emissiveColor={accent} />
+          </box>
+          <sphere name={`office-enemy-alert-dot-${enemy.id}`} position={p(0, -0.02, 1.16)} options={{ diameter: 0.1, segments: 12 }}>
+            <standardMaterial name={`office-enemy-alert-dot-material-${enemy.id}`} diffuseColor={accent} emissiveColor={accent} />
+          </sphere>
+        </>
+      ) : (
+        <>
+          <box name={`office-enemy-badge-${enemy.id}`} position={p(-0.15, -0.2, 0.62)} rotationY={yaw} options={{ width: 0.13, height: 0.1, depth: 0.04 }}>
+            <standardMaterial name={`office-enemy-badge-material-${enemy.id}`} diffuseColor={accent} emissiveColor={Color3.FromHexString("#000000")} />
+          </box>
+          <torus name={`office-enemy-patrol-ring-${enemy.id}`} position={p(0, 0, 1.18)} rotationX={Tools.ToRadians(90)} options={{ diameter: 0.42, thickness: 0.035, tessellation: 30 }}>
+            <standardMaterial name={`office-enemy-patrol-ring-material-${enemy.id}`} diffuseColor={accent} emissiveColor={accent} alpha={0.86} />
+          </torus>
+        </>
+      )}
+    </>
+  );
+}
+
+function OfficeDroneEnemy({ enemy, position }: { enemy: ActiveEnemy; position: Vector3 }) {
+  const steel = Color3.FromHexString("#94A3B8");
+  const steelDark = Color3.FromHexString("#334155");
+  const blue = Color3.FromHexString("#38BDF8");
+  const yellow = Color3.FromHexString("#FDE68A");
+  const black = Color3.FromHexString("#020617");
+  const white = Color3.FromHexString("#FFFFFF");
+  const yaw = playerFacingYaw(enemy.direction);
+  const p = (x: number, z: number, y: number) => enemyOrientedPosition(position, x, z, y, yaw);
+
+  return (
+    <>
+      <cylinder name={`office-enemy-drone-shadow-${enemy.id}`} position={enemyVisualPosition(position, 0, 0.04, 0.035)} options={{ height: 0.02, diameter: 0.78, tessellation: 36 }}>
+        <standardMaterial name={`office-enemy-drone-shadow-material-${enemy.id}`} diffuseColor={black} emissiveColor={Color3.FromHexString("#000000")} alpha={0.3} />
+      </cylinder>
+      <cylinder name={`office-enemy-drone-body-${enemy.id}`} position={enemyVisualPosition(position, 0, 0, 0.46)} options={{ height: 0.28, diameter: 0.54, tessellation: 36 }}>
+        <standardMaterial name={`office-enemy-drone-body-material-${enemy.id}`} diffuseColor={steel} emissiveColor={Color3.FromHexString("#000000")} specularColor={white} alpha={0.9} />
+      </cylinder>
+      <torus name={`office-enemy-drone-bumper-${enemy.id}`} position={enemyVisualPosition(position, 0, 0, 0.48)} rotationX={Tools.ToRadians(90)} options={{ diameter: 0.72, thickness: 0.045, tessellation: 40 }}>
+        <standardMaterial name={`office-enemy-drone-bumper-material-${enemy.id}`} diffuseColor={steelDark} emissiveColor={Color3.FromHexString("#000000")} specularColor={white} />
+      </torus>
+      <box name={`office-enemy-drone-screen-${enemy.id}`} position={p(0, -0.29, 0.5)} rotationY={yaw} options={{ width: 0.25, height: 0.12, depth: 0.04 }}>
+        <standardMaterial name={`office-enemy-drone-screen-material-${enemy.id}`} diffuseColor={blue} emissiveColor={blue} specularColor={white} />
+      </box>
+      <cylinder name={`office-enemy-drone-antenna-${enemy.id}`} position={enemyVisualPosition(position, 0, 0, 0.76)} options={{ height: 0.2, diameter: 0.035, tessellation: 12 }}>
+        <standardMaterial name={`office-enemy-drone-antenna-material-${enemy.id}`} diffuseColor={steelDark} emissiveColor={Color3.FromHexString("#000000")} />
+      </cylinder>
+      <sphere name={`office-enemy-drone-light-${enemy.id}`} position={p(0, -0.01, 0.9)} options={{ diameter: 0.11, segments: 16 }}>
+        <standardMaterial name={`office-enemy-drone-light-material-${enemy.id}`} diffuseColor={yellow} emissiveColor={Color3.FromHexString("#F59E0B")} />
+      </sphere>
+      <torus name={`office-enemy-drone-scan-${enemy.id}`} position={p(0, 0, 0.2)} rotationX={Tools.ToRadians(90)} options={{ diameter: 0.9, thickness: 0.028, tessellation: 48 }}>
+        <standardMaterial name={`office-enemy-drone-scan-material-${enemy.id}`} diffuseColor={blue} emissiveColor={blue} alpha={0.42} />
+      </torus>
     </>
   );
 }
